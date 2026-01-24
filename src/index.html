@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>BasisTech LPR</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="tabs">
+            <button onclick="showTab('scan')" class="active">Scanner</button>
+            <button onclick="showTab('history')">My History</button>
+        </div>
+
+        <div id="scan-tab" class="tab-content active">
+            <div class="camera-wrapper">
+                <video id="video" autoplay playsinline muted></video>
+                <canvas id="canvas" style="display:none;"></canvas>
+            </div>
+            
+            <div class="controls">
+                <div class="input-group">
+                    <select id="state-select">
+                        <option value="MA" selected>MA</option>
+                        <option value="VA">VA</option>
+                        <option value="NY">NY</option>
+                        <option value="MD">MD</option>
+                        <option value="DC">DC</option>
+                    </select>
+                    <input type="text" id="manual-plate" placeholder="Manual Entry...">
+                    <button class="btn-secondary" onclick="manualSearch()">Go</button>
+                </div>
+
+                <div id="result-display" class="result-box hidden">
+                    <h2 id="result-name"></h2>
+                    <p id="result-details"></p>
+                </div>
+
+                <button id="scan-btn" onclick="captureAndScan()">SCAN CAMERA</button>
+            </div>
+        </div>
+
+        <div id="history-tab" class="tab-content">
+            <button onclick="loadHistory()" style="margin-bottom:10px;">Refresh</button>
+            <ul id="history-list"></ul>
+        </div>
+    </div>
+    <script src="static/app.js"></script>
+</body>
+</html>
