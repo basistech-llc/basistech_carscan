@@ -71,6 +71,13 @@ Conditions:
   CreateAcmCert: !Equals [!Ref CertificateArn, ""]
 
 Resources:
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Required for EventBridge triggers
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
   HomeCertificate:
     Type: AWS::CertificateManager::Certificate
     Condition: CreateAcmCert
@@ -116,6 +123,19 @@ Resources:
             ApiId: !Ref MyHttpApi
             Path: /{proxy+}
             Method: ANY
+        # S3 Upload Trigger via EventBridge
+        S3UploadEvent:
+          Type: EventBridgeRule
+          Properties:
+            InputPath: $.detail
+            Pattern:
+              source: [ "aws.s3" ]
+              detail-type: [ "Object Created" ]
+              detail:
+                bucket:
+                  name: [ !Ref UploadBucket ]
+                object:
+                  key: [ { "prefix": "uploads/" } ]
 
 Outputs:
   ApiId:

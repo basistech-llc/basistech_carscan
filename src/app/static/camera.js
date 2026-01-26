@@ -3,8 +3,8 @@ const canvas = document.getElementById('canvas');
 const stateSelect = document.getElementById('state-select');
 
 // Get current API base path (e.g. /Prod/ or /Staging/) from window location
-const API_BASE = window.location.pathname.endsWith('/') 
-    ? window.location.pathname 
+const API_BASE = window.location.pathname.endsWith('/')
+    ? window.location.pathname
     : window.location.pathname + '/';
 
 // Normalize fetch calls to include the stage path
@@ -43,16 +43,16 @@ async function captureAndScan() {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
+
     canvas.toBlob(async (blob) => {
         showResult("Processing...", "", null);
-        
+
         // 1. Get Presigned URL
         const presignedRes = await apiCall('api/upload-url');
         if(presignedRes.status === 401) window.location.reload(); // Auth check
-        
+
         const presignedData = await presignedRes.json();
-        
+
         // 2. Upload to S3
         const formData = new FormData();
         Object.entries(presignedData.fields).forEach(([k, v]) => formData.append(k, v));
@@ -61,9 +61,9 @@ async function captureAndScan() {
         await fetch(presignedData.url, { method: 'POST', body: formData });
 
         // 3. Scan
-        doScan({ 
+        doScan({
             image_key: presignedData.fields.key,
-            state: stateSelect.value 
+            state: stateSelect.value
         });
 
     }, 'image/jpeg');
@@ -72,27 +72,33 @@ async function captureAndScan() {
 async function manualSearch() {
     const text = document.getElementById('manual-plate').value;
     if(!text) return;
-    doScan({ 
-        manual_text: text, 
-        state: stateSelect.value 
+    doScan({
+        manual_text: text,
+        state: stateSelect.value
     });
 }
 
 async function doScan(payload) {
-    showResult("Scanning...", "Consulting Brivo...", null);
-    
+    showResult("Processing...", "Analyzing Image...", null);
+
     const res = await apiCall('api/scan', {
         method: 'POST',
         body: JSON.stringify(payload)
     });
-    
-    const data = await res.json();
-    
-    if (data.found) {
-        showResult(data.user, `${data.plate} (${data.state})`, true);
-    } else {
-        showResult("NOT FOUND", `${data.plate || 'Unknown'} (${data.state})`, false);
-    }
+    const { job_id } = await res.json();
+
+    // Poll for results
+    const poll = setInterval(async () => {
+        const statusRes = await apiCall(`api/status/${job_id}`);
+        const statusData = await statusRes.json();
+
+        if (statusData.status === 'complete') {
+            clearInterval(poll);
+            const data = statusData.data;
+            const found = data.result !== "Not Found";
+            showResult(data.result, `${data.plate}`, found);
+        }
+    }, 1500);
 }
 
 function showResult(title, subtitle, isSuccess) {
@@ -101,7 +107,7 @@ function showResult(title, subtitle, isSuccess) {
     if (isSuccess === true) box.classList.add('success');
     if (isSuccess === false) box.classList.add('failure');
     if (isSuccess === null) box.classList.add('processing'); // Grey/Loading state
-    
+
     box.classList.remove('hidden');
     document.getElementById('result-name').innerText = title;
     document.getElementById('result-details').innerText = subtitle;
@@ -110,7 +116,7 @@ function showResult(title, subtitle, isSuccess) {
 async function loadHistory() {
     const res = await apiCall('api/history');
     if(res.status === 401) return window.location.reload();
-    
+
     const items = await res.json();
     const list = document.getElementById('history-list');
     list.innerHTML = items.map(item => `

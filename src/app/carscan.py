@@ -3,57 +3,58 @@ import time
 import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import Router
-from aws_lambda_powertools.utilities import parameters
 
 logger = Logger(child=True)
 router = Router()
-
-s3 = boto3.client('s3')
-rekognition = boto3.client('rekognition')
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(os.environ['TABLE_NAME'])
+s3_client = boto3.client('s3')
+# ... other clients (rekognition, dynamodb) ...
 
 @router.get("/upload-url")
-def get_upload_url():
-    user = router.context.get("authenticated_user")
-    key = f"uploads/{user}/{int(time.time())}.jpg"
+def get_url():
+    user = router.context.get("user_email")
+    state = router.current_event.query_string_parameters.get("state", "MA")
+    job_id = f"{int(time.time())}-{user.split('@')[0]}"
+    key = f"uploads/{job_id}.jpg"
     
-    presigned = s3.generate_presigned_post(
+    # Passing metadata into the presigned POST
+    presigned = s3_client.generate_presigned_post(
         Bucket=os.environ['BUCKET_NAME'],
         Key=key,
-        Fields={"acl": "public-read", "Content-Type": "image/jpeg"},
+        Fields={
+            "x-amz-meta-user": user,
+            "x-amz-meta-state": state,
+            "Content-Type": "image/jpeg"
+        },
+        Conditions=[
+            {"x-amz-meta-user": user},
+            {"x-amz-meta-state": state},
+            ["starts-with", "$Content-Type", "image/"]
+        ],
         ExpiresIn=3600
     )
-    return presigned
+    return {"presigned": presigned, "job_id": key}
 
-@router.post("/scan")
-def process_car_scan():
-    user = router.context.get("authenticated_user")
-    body = router.current_event.json_body
+# Dedicated function to handle the EventBridge logic
+def handle_s3_event(detail):
+    bucket = detail['bucket']['name']
+    key = detail['object']['key']
     
-    # Fetch Brivo API Key via Powertools (cached for efficiency)
-    brivo_secrets = parameters.get_secret(os.environ['BRIVO_SECRET_ARN'], transform='json')
+    # 1. Fetch metadata from the uploaded object
+    head = s3_client.head_object(Bucket=bucket, Key=key)
+    user = head['Metadata'].get('user')
+    state = head['Metadata'].get('state', 'MA')
     
-    image_key = body.get('image_key')
-    plate_text = body.get('manual_text')
+    # 2. Perform LPR and Brivo Lookup
+    plate = _do_lpr(bucket, key)
+    result = _brivo_lookup(plate, state)
     
-    if image_key and not plate_text:
-        plate_text = _call_rekognition(image_key)
-
-    # Business Logic and Logging
-    log_entry = {
+    # 3. Update DynamoDB (Polling Target)
+    table.put_item(Item={
         'user_email': user,
-        'sk': f"log#{int(time.time())}",
-        'plate': plate_text or "UNKNOWN"
-    }
-    table.put_item(Item=log_entry)
-    
-    return {"status": "success", "plate": plate_text}
-
-def _call_rekognition(key):
-    try:
-        resp = rekognition.detect_text(Image={'S3Object': {'Bucket': os.environ['BUCKET_NAME'], 'Name': key}})
-        return next((t['DetectedText'] for t in resp['TextDetections'] if t['Confidence'] > 90), None)
-    except Exception: # pylint: disable=broad-except
-        logger.error(f"Rekognition failed for {key}")
-        return None
+        'sk': f"job#{key}", # job_id is the key
+        'plate': plate or "NOT_DETECTED",
+        'result': result or "Not Found",
+        'status': 'COMPLETE',
+        'timestamp': int(time.time())
+    })
+    logger.info(f"Scan complete for {key}")
