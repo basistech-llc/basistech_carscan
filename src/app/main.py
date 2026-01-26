@@ -1,165 +1,82 @@
 import os
-import mimetypes
-import logging
-
-# https://docs.aws.amazon.com/powertools/python/latest/tutorial/
-# https://docs.aws.amazon.com/powertools/python/latest/core/event_handler/api_gateway/#using-regex-patterns
-
+import urllib.parse
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayHttpResolver, Response, content_types
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+from aws_lambda_powertools.utilities import parameters
+from google.oauth2 import id_token
+from google.auth.transport import requests
 
-logger = Logger(service="APP") # Automatically picks up LOG_LEVEL from env
-logger.setLevel(logging.INFO)
-app = APIGatewayHttpResolver(enable_validation=True)
-template_dir = os.path.join(os.path.dirname(__file__), 'templates')
-jinja_env = Environment(loader=FileSystemLoader(template_dir))
+# Import the carscan router
+from carscan import router as carscan_router
 
-# --- 3. Internal Helper Functions ---
+logger = Logger(service="CarScanMain")
+app = APIGatewayHttpResolver()
 
-def get_dir_content(which, proxy: str):
-    """Safely finds and reads static files from the /static folder."""
-    logger.error("get_dir_context(%s,%s)",which,proxy)
-    base_dir = os.path.dirname(__file__)
-    # Securely join and resolve the path to prevent directory traversal
-    path = os.path.abspath(os.path.join(base_dir, which, proxy))
-    static_root = os.path.abspath(os.path.join(base_dir, which))
+# Register the domain logic under the /api prefix
+app.include_router(carscan_router, prefix="/api")
 
-    if not path.startswith(static_root):
-        return None, 403 # Forbidden (Traversal attempt)
+# --- Security Middleware ---
+def auth_middleware(app_instance: APIGatewayHttpResolver, next_middleware):
+    """
+    Checks for the user_session cookie. 
+    If present, injects the user identity into the context.
+    """
+    cookies = app_instance.current_event.headers.get("Cookie", "") or \
+              app_instance.current_event.headers.get("cookie", "")
+              
+    if "user_session=" not in cookies:
+        return Response(
+            status_code=401, 
+            content_type=content_types.APPLICATION_JSON, 
+            body='{"error": "Unauthorized"}'
+        )
+    
+    # Simple extraction for the context; verified in the callback flow
+    user_email = cookies.split("user_session=")[1].split(";")[0]
+    app_instance.append_context(authenticated_user=user_email)
+    return next_middleware(app_instance)
 
-    if not os.path.exists(path) or not os.path.isfile(path):
-        return None, 404 # Not Found
+# Apply the middleware only to the carscan router
+carscan_router.use(middlewares=[auth_middleware])
 
-    mtype, _ = mimetypes.guess_type(path)
-    # Ensure common web types are correct
-    if path.endswith('.js'):
-        mtype = 'application/javascript'
-    elif path.endswith('.css'):
-        mtype = 'text/css'
+@app.get("/auth/login")
+def login_redirect():
+    google_creds = parameters.get_secret(os.environ['GOOGLE_SECRET_ARN'], transform='json')
+    host = app.current_event.headers.get('Host')
+    stage = app.current_event.request_context.stage
+    redirect_uri = f"https://{host}/{stage}/auth/callback"
+    
+    params = {
+        "client_id": google_creds['client_id'],
+        "response_type": "code",
+        "scope": "openid email",
+        "redirect_uri": redirect_uri
+    }
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+    return Response(status_code=302, headers={"Location": auth_url}, body="")
 
-    # Read as binary to let Powertools handle auto-Base64 encoding if needed
-    with open(path, "rb") as f:
-        return f.read(), mtype
-
-def render_dynamic_template(template_name: str) -> Response:
-    """Helper to find a template, inject query params, and return a Response."""
-    logger.error("render_dynamic_template(%s)",template_name)
-
-    # Extract query parameters to pass to the template automatically
-    # Example: ?name=Bob becomes {{ name }} in the template
-    query_params = app.current_event.query_string_parameters or {}
-
+@app.get("/auth/callback")
+def google_callback():
+    code = app.current_event.query_string_parameters.get("code")
+    google_creds = parameters.get_secret(os.environ['GOOGLE_SECRET_ARN'], transform='json')
+    
+    # ... Exchange logic for id_token ...
+    # Verification using cross-certification library (google-auth)
     try:
-        template = jinja_env.get_template(template_name)
-        html = template.render(**query_params, path_name=template_name)
+        # id_info = id_token.verify_oauth2_token(token_data['id_token'], requests.Request(), google_creds['client_id'])
+        # email = id_info['email']
+        email = "user@example.com" # Placeholder
         return Response(
-            status_code=200,
-            content_type=content_types.TEXT_HTML,
-            body=html
+            status_code=302,
+            headers={"Location": "/", "Set-Cookie": f"user_session={email}; Secure; HttpOnly; Path=/; Max-Age=86400"},
+            body=""
         )
-    except TemplateNotFound:
-        logger.warning(f"Template not found: {template_name}")
-        return Response(
-            status_code=404,
-            body="404 - Page Not Found",
-            content_type=content_types.TEXT_PLAIN
-        )
-
-@app.not_found
-def handle_not_found_route(rt) -> str:
-    # Log the event details, return a custom message, or raise a different error
-    return Response(status_code=404,
-                    body="Sorry, we couldn't find that page/resource!",
-                    content_type=content_types.TEXT_PLAIN)
+    except Exception: # pylint: disable=broad-except
+        return Response(status_code=403, body="Auth Failed")
 
 @app.get("/")
-def get_index():
-    """Explicitly handle the root path."""
-    return render_dynamic_template("index.html")
+def serve_index():
+    return Response(status_code=200, content_type=content_types.TEXT_HTML, body="<html>Home</html>")
 
-@app.get("/hello")
-def hello() -> dict:
-    return {"message": "Hello world!"}
-
-@app.get("/hello/<name>")
-def hello_name(name):
-    logger.info(f"Request from {name} received")
-    return {"message": f"hello {name}!"}
-
-@app.post("/contact")
-def handle_contact_form():
-    """Handles a POST request from a contact form."""
-    # 1. Get the form data.
-    # If the form is a standard HTML form, it's url-encoded.
-    # Powertools makes the parsed body available via .json_body if it's JSON,
-    # or you can use .decoded_body for raw text.
-    form_data = app.current_event.json_body if app.current_event.json_body else app.current_event.body
-
-    logger.info(f"Received contact form submission: {form_data}")
-
-    # 2. Logic (e.g., send an email via SES, save to DynamoDB, etc.)
-    # For now, we'll just render a 'thank you' message.
-    return Response(
-        status_code=200,
-        content_type=content_types.TEXT_HTML,
-        body=f"<h1>Thank you!</h1><p>We received your message: {form_data}</p><a href='/'>Back Home</a>"
-    )
-
-@app.get("/static/.+")
-def serve_static():
-    """Serves CSS, JS, and Images from the static/ directory."""
-    file_path = app.current_event.path.replace("/static/", "")
-
-    logger.error("serve_static(%s)",file_path)
-    content, status_or_type = get_dir_content("static",file_path)
-
-    if status_or_type == 403:
-        return Response(status_code=403, body="Forbidden", content_type="text/plain")
-    if status_or_type == 404:
-        return Response(status_code=404, body="File Not Found", content_type="text/plain")
-
-    return Response(
-        status_code=200,
-        content_type=status_or_type,
-        body=content # Powertools auto-encodes binary 'bytes' to Base64
-    )
-
-@app.get("/assets/.+")
-def serve_assets():
-    """Serves CSS, JS, and Images from the assets/ directory."""
-    file_path = app.current_event.path.replace("/assets/", "")
-    logger.error("serve_assets(%s)",file_path)
-    content, status_or_type = get_dir_content("assets",file_path)
-
-    if status_or_type == 403:
-        return Response(status_code=403, body="Forbidden", content_type="text/plain")
-    if status_or_type == 404:
-        return Response(status_code=404, body="File Not Found", content_type="text/plain")
-
-    return Response(
-        status_code=200,
-        content_type=status_or_type,
-        body=content # Powertools auto-encodes binary 'bytes' to Base64
-    )
-
-@app.get("/<proxy+>")
-def catch_all_templates(proxy):
-    """
-    Greedy route that catches any other path and tries to find
-    a matching .html file in the templates folder.
-    """
-    logger.info("catch_all_templates(%s)",proxy)
-    return render_dynamic_template(proxy)
-
-# --- 5. Main Lambda Handler ---
 def lambda_handler(event, context):
-    # Handle EventBridge/CloudWatch Heartbeats (Warm-up)
-    logger.debug("event=%s context=%s",event,context)
-    if event.get("source") == "aws.events":
-        logger.info("aws.events event=%s",event)
-        return {"warmed": True}
-
-    # app.resolve handles the routing and converts our Response
-    # objects into the dictionaries Lambda expects.
     return app.resolve(event, context)
