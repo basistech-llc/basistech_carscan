@@ -18,7 +18,10 @@ Globals:
       Variables:
         LOG_LEVEL: !Ref LogLevel
         DEPLOYMENT_TIMESTAMP: !Ref DeploymentTimestamp
-        CALA_TABLE_NAME: cala-garage-scans
+        TABLE_NAME: !Ref MyTable
+        BUCKET_NAME: !Ref UploadBucket
+        GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArt
+        BRIVO_SECRET_ARN: !Ref BrivoApiKeyArn
 
 Parameters:
   StageName:

@@ -1,268 +1,165 @@
-import json
 import os
-import boto3
-import uuid
-import time
-import urllib.request
-import urllib.parse
-import base64
-from http import cookies
+import mimetypes
+import logging
 
-# --- AWS Clients ---
-s3 = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
-rekognition = boto3.client('rekognition')
-secrets_client = boto3.client('secretsmanager')
+# https://docs.aws.amazon.com/powertools/python/latest/tutorial/
+# https://docs.aws.amazon.com/powertools/python/latest/core/event_handler/api_gateway/#using-regex-patterns
 
-table = dynamodb.Table(os.environ['TABLE_NAME'])
-bucket_name = os.environ['BUCKET_NAME']
+from aws_lambda_powertools import Logger
+from aws_lambda_powertools.event_handler import APIGatewayHttpResolver, Response, content_types
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
-# --- Secrets Management ---
-def get_secret(secret_arn):
-    """
-    Fetches and parses a JSON secret from Secrets Manager.
-    """
+logger = Logger(service="APP") # Automatically picks up LOG_LEVEL from env
+logger.setLevel(logging.INFO)
+app = APIGatewayHttpResolver(enable_validation=True)
+template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+jinja_env = Environment(loader=FileSystemLoader(template_dir))
+
+# --- 3. Internal Helper Functions ---
+
+def get_dir_content(which, proxy: str):
+    """Safely finds and reads static files from the /static folder."""
+    logger.error("get_dir_context(%s,%s)",which,proxy)
+    base_dir = os.path.dirname(__file__)
+    # Securely join and resolve the path to prevent directory traversal
+    path = os.path.abspath(os.path.join(base_dir, which, proxy))
+    static_root = os.path.abspath(os.path.join(base_dir, which))
+
+    if not path.startswith(static_root):
+        return None, 403 # Forbidden (Traversal attempt)
+
+    if not os.path.exists(path) or not os.path.isfile(path):
+        return None, 404 # Not Found
+
+    mtype, _ = mimetypes.guess_type(path)
+    # Ensure common web types are correct
+    if path.endswith('.js'):
+        mtype = 'application/javascript'
+    elif path.endswith('.css'):
+        mtype = 'text/css'
+
+    # Read as binary to let Powertools handle auto-Base64 encoding if needed
+    with open(path, "rb") as f:
+        return f.read(), mtype
+
+def render_dynamic_template(template_name: str) -> Response:
+    """Helper to find a template, inject query params, and return a Response."""
+    logger.error("render_dynamic_template(%s)",template_name)
+
+    # Extract query parameters to pass to the template automatically
+    # Example: ?name=Bob becomes {{ name }} in the template
+    query_params = app.current_event.query_string_parameters or {}
+
     try:
-        get_secret_value_response = secrets_client.get_secret_value(SecretId=secret_arn)
-        if 'SecretString' in get_secret_value_response:
-            return json.loads(get_secret_value_response['SecretString'])
-    except Exception as e:
-        print(f"Error retrieving secret {secret_arn}: {e}")
-        return {}
-    return {}
-
-# Load secrets during Cold Start
-print("Loading Secrets...")
-google_creds = get_secret(os.environ['GOOGLE_SECRET_ARN'])
-brivo_creds = get_secret(os.environ['BRIVO_SECRET_ARN'])
-
-GOOGLE_CLIENT_ID = google_creds.get('client_id')
-GOOGLE_CLIENT_SECRET = google_creds.get('client_secret')
-BRIVO_API_KEY = brivo_creds.get('api_key')
-
-def lambda_handler(event, context):
-    path = event['path']
-    method = event['httpMethod']
-    headers = event.get('headers', {}) or {}
-    
-    # 1. Static File Serving
-    if path == "/" or path == "/index.html":
-        user = get_authenticated_user(headers)
-        if not user:
-             return serve_login_page()
-        return serve_file('index.html', 'text/html')
-    
-    if path.startswith("/static/"):
-        filename = path.split("/")[-1]
-        ext = filename.split(".")[-1]
-        mime = "text/css" if ext == "css" else "application/javascript"
-        # Security: Prevent directory traversal
-        if "/" in filename or ".." in filename: return json_response({}, 404)
-        return serve_file(filename, mime)
-
-    # 2. Authentication Flow (Google OAuth 2.0)
-    if path == "/auth/login":
-        return initiate_google_auth(event)
-    
-    if path == "/auth/callback":
-        return handle_google_callback(event)
-
-    # 3. API Routes (Protected)
-    user = get_authenticated_user(headers)
-    if not user:
-        return json_response({'error': 'Unauthorized'}, 401)
-
-    if path == "/api/upload-url" and method == "GET":
-        key = f"uploads/{user}/{int(time.time())}.jpg"
-        presigned = s3.generate_presigned_post(
-            Bucket=bucket_name,
-            Key=key,
-            Fields={"acl": "public-read", "Content-Type": "image/jpeg"},
-            Conditions=[{"acl": "public-read"}, {"Content-Type": "image/jpeg"}],
-            ExpiresIn=3600
+        template = jinja_env.get_template(template_name)
+        html = template.render(**query_params, path_name=template_name)
+        return Response(
+            status_code=200,
+            content_type=content_types.TEXT_HTML,
+            body=html
         )
-        return json_response(presigned)
-
-    if path == "/api/scan" and method == "POST":
-        body = json.loads(event['body'])
-        state = body.get('state', 'MA')
-        
-        plate_text = body.get('manual_text')
-        image_key = body.get('image_key')
-        
-        # Perform Rekognition if image provided
-        if image_key and not plate_text:
-            plate_text = perform_lpr(image_key)
-        
-        if not plate_text:
-            return json_response({'error': 'No plate detected', 'found': False}, 200)
-
-        clean_plate = ''.join(c for c in plate_text if c.isalnum()).upper()
-        
-        # Brivo Lookup
-        brivo_result = lookup_brivo_user(clean_plate, state)
-        
-        # Log to DynamoDB
-        save_log(user, image_key, clean_plate, state, brivo_result)
-        
-        return json_response({
-            'plate': clean_plate,
-            'state': state,
-            'found': bool(brivo_result),
-            'user': brivo_result or "Not Found"
-        })
-
-    if path == "/api/history" and method == "GET":
-        resp = table.query(
-            KeyConditionExpression=boto3.dynamodb.conditions.Key('user_email').eq(user),
-            ScanIndexForward=False, # Newest first
-            Limit=50
+    except TemplateNotFound:
+        logger.warning(f"Template not found: {template_name}")
+        return Response(
+            status_code=404,
+            body="404 - Page Not Found",
+            content_type=content_types.TEXT_PLAIN
         )
-        return json_response(resp.get('Items', []))
 
-    return json_response({'error': 'Not Found'}, 404)
+@app.not_found
+def handle_not_found_route(rt) -> str:
+    # Log the event details, return a custom message, or raise a different error
+    return Response(status_code=404,
+                    body="Sorry, we couldn't find that page/resource!",
+                    content_type=content_types.TEXT_PLAIN)
 
-# --- Helpers ---
+@app.get("/")
+def get_index():
+    """Explicitly handle the root path."""
+    return render_dynamic_template("index.html")
 
-def serve_file(filename, mime):
-    try:
-        with open(filename, 'r') as f:
-            return {
-                "statusCode": 200,
-                "headers": {"Content-Type": mime},
-                "body": f.read()
-            }
-    except:
-        return json_response({}, 404)
+@app.get("/hello")
+def hello() -> dict:
+    return {"message": "Hello world!"}
 
-def serve_login_page():
-    # Simple login page
-    html = """
-    <html><body style="font-family:sans-serif; text-align:center; padding-top:50px;">
-        <h1>BasisTech Scan App</h1>
-        <p>Please log in to continue.</p>
-        <a href='/auth/login' style="background:#4285F4; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;">Login with Google</a>
-    </body></html>
-    """
-    return {"statusCode": 200, "headers": {"Content-Type": "text/html"}, "body": html}
+@app.get("/hello/<name>")
+def hello_name(name):
+    logger.info(f"Request from {name} received")
+    return {"message": f"hello {name}!"}
 
-def get_base_url(event):
-    stage = event['requestContext']['stage']
-    host = event['headers'].get('Host')
-    proto = event['headers'].get('X-Forwarded-Proto', 'https')
-    return f"{proto}://{host}/{stage}"
+@app.post("/contact")
+def handle_contact_form():
+    """Handles a POST request from a contact form."""
+    # 1. Get the form data.
+    # If the form is a standard HTML form, it's url-encoded.
+    # Powertools makes the parsed body available via .json_body if it's JSON,
+    # or you can use .decoded_body for raw text.
+    form_data = app.current_event.json_body if app.current_event.json_body else app.current_event.body
 
-def initiate_google_auth(event):
-    base_url = get_base_url(event)
-    redirect_uri = f"{base_url}/auth/callback"
-    
-    scope = "openid email"
-    auth_url = (
-        f"https://accounts.google.com/o/oauth2/v2/auth?"
-        f"client_id={GOOGLE_CLIENT_ID}&"
-        f"response_type=code&"
-        f"scope={scope}&"
-        f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
-        f"access_type=online"
+    logger.info(f"Received contact form submission: {form_data}")
+
+    # 2. Logic (e.g., send an email via SES, save to DynamoDB, etc.)
+    # For now, we'll just render a 'thank you' message.
+    return Response(
+        status_code=200,
+        content_type=content_types.TEXT_HTML,
+        body=f"<h1>Thank you!</h1><p>We received your message: {form_data}</p><a href='/'>Back Home</a>"
     )
-    return {
-        "statusCode": 302,
-        "headers": {"Location": auth_url},
-        "body": ""
-    }
 
-def handle_google_callback(event):
-    code = event.get('queryStringParameters', {}).get('code')
-    if not code: return json_response({'error': 'No code'}, 400)
-    
-    base_url = get_base_url(event)
-    redirect_uri = f"{base_url}/auth/callback"
+@app.get("/static/.+")
+def serve_static():
+    """Serves CSS, JS, and Images from the static/ directory."""
+    file_path = app.current_event.path.replace("/static/", "")
 
-    # Exchange code for token
-    data = urllib.parse.urlencode({
-        'code': code,
-        'client_id': GOOGLE_CLIENT_ID,
-        'client_secret': GOOGLE_CLIENT_SECRET,
-        'redirect_uri': redirect_uri,
-        'grant_type': 'authorization_code'
-    }).encode()
-    
-    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
-    try:
-        with urllib.request.urlopen(req) as res:
-            token_resp = json.loads(res.read())
-            id_token = token_resp.get('id_token')
-            
-            # Decode ID Token to get email (Validation skipped for MVP)
-            parts = id_token.split('.')
-            payload = json.loads(base64_url_decode(parts[1]))
-            email = payload.get('email')
-            
-            return {
-                "statusCode": 302,
-                "headers": {
-                    "Location": "../",
-                    "Set-Cookie": f"user_session={email}; Secure; HttpOnly; Path=/; Max-Age=86400"
-                },
-                "body": ""
-            }
-    except Exception as e:
-        return json_response({'error': str(e)}, 500)
+    logger.error("serve_static(%s)",file_path)
+    content, status_or_type = get_dir_content("static",file_path)
 
-def get_authenticated_user(headers):
-    cookie_header = headers.get('Cookie', '') or headers.get('cookie', '')
-    if 'user_session=' in cookie_header:
-        try:
-            return cookie_header.split('user_session=')[1].split(';')[0]
-        except:
-            return None
-    return None
+    if status_or_type == 403:
+        return Response(status_code=403, body="Forbidden", content_type="text/plain")
+    if status_or_type == 404:
+        return Response(status_code=404, body="File Not Found", content_type="text/plain")
 
-def base64_url_decode(inp):
-    padding = 4 - (len(inp) % 4)
-    inp += ("=" * padding)
-    return base64.urlsafe_b64decode(inp).decode()
+    return Response(
+        status_code=200,
+        content_type=status_or_type,
+        body=content # Powertools auto-encodes binary 'bytes' to Base64
+    )
 
-def perform_lpr(key):
-    try:
-        response = rekognition.detect_text(
-            Image={'S3Object': {'Bucket': bucket_name, 'Name': key}}
-        )
-        for text in response['TextDetections']:
-            # Confidence Check 90%
-            if text['Type'] == 'LINE' and text['Confidence'] >= 90.0:
-                txt = text['DetectedText'].replace(" ", "")
-                if len(txt) > 4 and txt.isalnum():
-                    return txt
-    except Exception as e:
-        print(f"LPR Error: {e}")
-    return None
+@app.get("/assets/.+")
+def serve_assets():
+    """Serves CSS, JS, and Images from the assets/ directory."""
+    file_path = app.current_event.path.replace("/assets/", "")
+    logger.error("serve_assets(%s)",file_path)
+    content, status_or_type = get_dir_content("assets",file_path)
 
-def lookup_brivo_user(plate, state):
-    # USE SECRETS HERE
-    if not BRIVO_API_KEY:
-        print("Brivo Secret missing")
-        return None
-        
-    print(f"Using Brivo Key: {BRIVO_API_KEY[:4]}... to search {plate} in {state}")
-    
-    # Mock Database
-    mock_db = {"ABC1234": "Simson Garfinkel", "TEST99": "Jane Doe"}
-    return mock_db.get(plate)
+    if status_or_type == 403:
+        return Response(status_code=403, body="Forbidden", content_type="text/plain")
+    if status_or_type == 404:
+        return Response(status_code=404, body="File Not Found", content_type="text/plain")
 
-def save_log(user, image_key, plate, state, result):
-    table.put_item(Item={
-        'user_email': user,
-        'sk': f"log#{int(time.time())}",
-        'image_key': image_key or "manual",
-        'plate': plate,
-        'state': state,
-        'result': result or "Not Found"
-    })
+    return Response(
+        status_code=200,
+        content_type=status_or_type,
+        body=content # Powertools auto-encodes binary 'bytes' to Base64
+    )
 
-def json_response(data, code=200):
-    return {
-        "statusCode": code,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(data)
-    }
+@app.get("/<proxy+>")
+def catch_all_templates(proxy):
+    """
+    Greedy route that catches any other path and tries to find
+    a matching .html file in the templates folder.
+    """
+    logger.info("catch_all_templates(%s)",proxy)
+    return render_dynamic_template(proxy)
+
+# --- 5. Main Lambda Handler ---
+def lambda_handler(event, context):
+    # Handle EventBridge/CloudWatch Heartbeats (Warm-up)
+    logger.debug("event=%s context=%s",event,context)
+    if event.get("source") == "aws.events":
+        logger.info("aws.events event=%s",event)
+        return {"warmed": True}
+
+    # app.resolve handles the routing and converts our Response
+    # objects into the dictionaries Lambda expects.
+    return app.resolve(event, context)

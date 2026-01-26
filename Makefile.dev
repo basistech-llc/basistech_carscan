@@ -219,11 +219,15 @@ stop_local_dynamodb:  bin/DynamoDBLocal.jar
 	bash bin/local_dynamodb_control.bash stop
 
 create-tables:
+ifeq ($(AWS_REGION),local)
 	for fn in etc/dynamodb_*.json ; do aws dynamodb create-table --cli-input-json file://$$fn ; done
 	aws dynamodb list-tables --output text
+endif
 
 delete-tables:
+ifeq ($(AWS_REGION),local)
 	for fn in etc/dynamodb_*.json ; do aws dynamodb delete-table --table-name $$(echo $$fn | sed s:etc/dynamodb_:: | sed s:.json::) ; done
+endif
 	aws dynamodb list-tables --output text
 
 list-tables:

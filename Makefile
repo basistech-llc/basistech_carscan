@@ -36,12 +36,12 @@ install-ubuntu:
 	which pipx || sudo apt install -y pipx
 	pipx ensurepath
 	pipx install poetry --force
-	which aws || sudo snap  install aws-cli --classic
+	which aws || sudo snap install aws-cli --classic
 	which chromium || sudo apt-get install -y chromium-browser chromium-chromedriver
-	which curl || sudo apt install curl
+	which curl || sudo apt install -y curl
 	which node || sudo apt install -y nodejs
-	which npm || sudo apt install -y npm
-	which zip || sudo apt install -y zip
+	which npm  || sudo apt install -y npm
+	which zip  || sudo apt install -y zip
 	which java || sudo apt install -y openjdk-21-jre-headless
 	npm install
 	npm ci
