@@ -1,0 +1,290 @@
+# -*- mode: makefile-gmake -*-
+# Simson's Python/DynamoDB/S3/Lambda Makefile
+
+# Supports:
+# - Local development
+# - Creates CI/CD environment in GitHub
+# - Manages deployemnt to AWS Linux
+# - Updated to handle virtual environment
+# - Simple CRUD management of local database instance for developers
+
+# Things you must define
+
+
+# Things you might want to change go here:
+LOCAL_BUCKET ?= s3bucket
+LOCAL_HTTP_PORT ?= 8080
+LOG_LEVEL ?= DEBUG		# default to debug unless changed
+PYLINT_THRESHOLD ?= 10.0
+STATIC_DIR ?= src/app/static
+TEMPLATES_DIR = ?= src/app/templates
+
+# If AWS_REGION is defined, use it. Otherwise assume local configuration
+ifeq ($(AWS_REGION),)
+    export AWS_REGION                ?= local
+    export AWS_ACCESS_KEY_ID         ?= minioadmin
+    export AWS_SECRET_ACCESS_KEY     ?= minioadmin
+    export AWS_ENDPOINT_URL_DYNAMODB ?= http://localhost:8010/
+    export AWS_ENDPOINT_URL_S3       ?= http://localhost:9100/
+endif
+
+PYR := .venv/pyvenv.cfg
+DYR := bin/DynamoDBLocal.jar
+SYR := bin/minio
+TS_FILES := $(wildcard *.ts */*.ts)
+JS_FILES := $(TS_FILES:.ts=.js)
+DYNAMODB_LOCAL_DOWNLOAD_URL:=https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_latest.zip
+
+# PT_VARS are required for any command that uses planttracer but with dynamically-generated prefixes
+PT_VARS := $(AWS_VARS) PLANTTRACER_S3_BUCKET=$(LOCAL_BUCKET)
+
+################################################################
+# Main targets used by CI/CD system and developers
+.PHONY: printenv all check lint coverage tags clean
+
+printenv:
+	printenv
+
+all:
+	@echo verify syntax and then restart
+	make lint
+	make run-local
+
+check:
+	make lint
+	make pytest
+	make jscoverage
+
+lint:
+	make pylint
+	make eslint
+
+coverage:
+	make pytest-coverage
+	make jscoverage
+
+tags:
+	etags src/app/*.py tests/*.py tests/fixtures/*.py src/app/static/*.js
+
+clean:
+	find . -name '*~' -exec rm {} \;
+	/bin/rm -rf __pycache__ */__pycache__
+
+distclean:
+	@echo removing all virtual environments
+	/bin/rm -rf .venv */.venv */.aws-sam
+	/bin/rm -rf .*cache */.*cache
+	/bin/rm -rf _build
+
+install: $(PYR)
+
+$(PYR):
+	poetry install
+
+install-playright:
+	poetry run playwright install
+
+################################################################
+## Program development: static analysis tools
+##
+.PHONY: pylint mypy black-reformat black-check
+
+## Use this targt for static analysis of the python files used for deployment
+PYLINT_OPTS:=--output-format=parseable --fail-under=$(PYLINT_THRESHOLD) --verbose
+
+pylint: $(PYR)
+	poetry run pylint  $(PYLINT_OPTS) src tests
+
+## Mypy static analysis
+mypy: $(PYR)
+	poetry run mypy --show-error-codes --pretty --ignore-missing-imports --strict src tests
+
+black-reformat: $(PYR)
+	poetry run black --line-length 127 .
+
+black-check: $(PYR)
+	poetry run black --line-length 127 . --check
+	@echo "If this fails, simply run: make black"
+
+isort: $(PYR)
+	@echo reordering and sorting import statement
+	poetry run isort . --profile=black
+
+isort-check: $(PYR)
+	poetry run isort --check . --profile=black
+
+flake: $(PYR)
+	poetry run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+	poetry run flake8 . --count --exit-zero --max-complexity=55 --max-line-length=127 --statistics --ignore F403,F405,E203,E231,E252,W503
+
+################################################################
+## Program development: dynamic analysis
+##
+
+## These tests now use fixtures that automatically create in-memory configurations and DynamoDB databases.
+## No environment variables need to be set.
+## set LOG_LEVEL at start of CLI to change the  log level
+
+pytest: $(PYR)
+	make create-tables || echo tables already exist
+	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests
+	make delete-tables
+
+
+pytest-coverage: $(PYR)
+	make create-tables || echo tables already exist
+	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) --cov=. --cov-report=xml --cov-report=html tests
+	make delete-tables
+
+pytest-selenium: $(PYR)
+	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests/sitetitle_test.py
+
+################################################################
+### Debug targets to develop and run locally.
+
+wipe-local: $(DYR) $(SYR)
+	@echo wiping all local artifacts and remaking the local bucket.
+	bin/local_minio_control.bash stop
+	bin/local_dynamodb_control.bash stop
+	/bin/rm -rf var
+	mkdir -p var
+	bin/local_minio_control.bash start
+	bin/local_dynamodb_control.bash start
+	make make-local-bucket
+
+delete-local: $(DYR) $(SYR)
+	@echo deleting all local artifacts
+	bin/local_minio_control.bash stop
+	bin/local_dynamodb_control.bash stop
+	/bin/rm -rf var
+
+FUNCTION_NAME ?= MyLambdaFunction
+
+run-local-api:
+	@jq -n \
+		--arg ddb "$$AWS_ENDPOINT_URL_DYNAMODB" \
+		--arg s3 "$$AWS_ENDPOINT_URL_S3" \
+		'{"$(FUNCTION_NAME)": {"AWS_ENDPOINT_URL_DYNAMODB": $$ddb, "AWS_ENDPOINT_URL_S3": $$s3, "POWERTOOLS_DEV": "true"}}' \
+		> temp_env.json
+	sam local start-api --env-vars temp_env.json
+
+################################################################
+### JavaScript
+
+eslint:
+	if [ -d $(STATIC_DIR) ]; then (cd $(STATIC_DIR);make eslint) ; fi
+	if [ -d $(TEMPLATES_DIR) ]; then (cd $(TEMPLATES_DIR);make eslint) ; fi
+
+jscoverage:
+	if [ -d $(STATIC_DIR) ]; then NODE_ENV=test NODE_PATH=$(STATIC_DIR) npm run coverage; NODE_PATH=$(STATIC_DIR) npm test ; fi
+
+instrument-js:
+	@echo "Instrumenting JavaScript files for browser coverage..."
+	@NODE_ENV=test node scripts/instrument-js.js
+
+browser-coverage-xml:
+	@echo Converting browser coverage to XML...
+	@if [ -f coverage/browser-coverage.json ]; then \
+		poetry run python -c "from tests.js_coverage_utils import convert_browser_coverage_to_xml; from pathlib import Path; convert_browser_coverage_to_xml(Path('coverage/browser-coverage.json'), Path('coverage/browser-coverage.xml'))"; \
+		echo Browser coverage converted to coverage/browser-coverage.xml; \
+	else \
+		echo No browser coverage found; \
+	fi
+
+jstest-debug:
+	NODE_PATH=src/app/static npm run test-debug
+
+
+################################################################
+# DynamoDBLocal
+# Installations are used by the CI pipeline and by local developers
+# See https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html for info about DynamoDB (local version)
+.PHONY: start_local_dynamodb stop_local_dynamodb list-tables
+
+# installation:
+bin/dynamodb_local_latest.zip:
+	mkdir -p bin
+	test -f bin/dynamodb_local_latest.zip || curl $(DYNAMODB_LOCAL_DOWNLOAD_URL) -o bin/dynamodb_local_latest.zip
+	test -f bin/dynamodb_local_latest.zip || (echo could not download $(DYNAMODB_LOCAL_DOWNLOAD_URL); exit 1)
+	find bin -ls
+
+bin/DynamoDBLocal.jar: bin/dynamodb_local_latest.zip
+	(cd bin; unzip -uq dynamodb_local_latest.zip DynamoDBLocal.jar 'DynamoDBLocal_lib/*')
+	touch bin/DynamoDBLocal.jar
+
+start_local_dynamodb: bin/DynamoDBLocal.jar
+	bash bin/local_dynamodb_control.bash start
+
+stop_local_dynamodb:  bin/DynamoDBLocal.jar
+	bash bin/local_dynamodb_control.bash stop
+
+create-tables:
+	for fn in etc/dynamodb_*.json ; do aws dynamodb create-table --cli-input-json file://$$fn ; done
+	aws dynamodb list-tables --output text
+
+delete-tables:
+	for fn in etc/dynamodb_*.json ; do aws dynamodb delete-table --table-name $$(echo $$fn | sed s:etc/dynamodb_:: | sed s:.json::) ; done
+	aws dynamodb list-tables --output text
+
+list-tables:
+	aws dynamodb list-tables
+
+################################################################
+# Minio (S3 clone -- see: https://min.io/)
+# Installations are used by the CI pipeline and by local developers
+
+# Sources:
+LINUX_BASE=https://dl.min.io/server/minio/release/linux-amd64
+LINUX_BASE_MC=https://dl.min.io/client/mc/release/linux-amd64/
+LINUX_ARM_BASE=https://dl.min.io/server/minio/release/linux-arm64
+LINUX_ARM_BASE_MC=https://dl.min.io/client/mc/release/linux-arm64/
+MACOS_BASE=https://dl.min.io/server/minio/release/darwin-arm64
+bin/minio:
+	@echo downloading and installing minio
+	mkdir -p bin
+	uname -a
+	if [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "amd64" ] ; then \
+		echo Linux amd64 ; curl $(LINUX_BASE)/minio -o bin/minio ; curl $(LINUX_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "x86_64" ] ; then \
+		echo Linux x86_64 ; curl $(LINUX_BASE)/minio -o bin/minio ; curl $(LINUX_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "aarch64" ] ; then \
+		echo Linux aarch64 ; curl $(LINUX_ARM_BASE)/minio -o bin/minio ; curl $(LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "arm64" ] ; then \
+		echo Linux arm64 ; curl $(LINUX_ARM_BASE)/minio -o bin/minio ; curl $(LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
+	else \
+		echo unknown os/architecture; exit 1; \
+	fi
+	chmod +x bin/minio
+	ls -l bin/minio
+	if [ "$$(uname -s)" = "Linux" ] ; then \
+		chmod +x bin/mc ; \
+		ls -l bin/mc ; \
+	fi
+
+start_local_minio: bin/minio
+	bash bin/local_minio_control.bash start
+
+stop_local_minio:  bin/minio
+	bash bin/local_minio_control.bash stop
+
+list-local-buckets:
+	$(AWS_VARS) aws s3 ls
+
+make-local-bucket:
+	if $(AWS_VARS) aws s3 ls s3://$(LOCAL_BUCKET)/ >/dev/null 2>&1; then \
+	 	echo $(LOCAL_BUCKET) exists ; \
+	else \
+		echo creating s3://$(LOCAL_BUCKET)/ ; \
+		$(AWS_VARS) aws s3 mb s3://$(LOCAL_BUCKET)/ ; \
+	fi
+	echo local buckets:
+	$(AWS_VARS) aws s3 ls
+
+.PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
+
+################################################################
+### Compile JavaScript to TypeScript
+
+%.js: %.ts
+	tsc $<

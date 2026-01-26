@@ -1,0 +1,17 @@
+"""
+    for method, paths in static.items():
+        for path in paths:
+            print(f"  {method} {path}")
+
+    # 2. Dump Dynamic Routes (Greedy routes like /assets/<proxy+>)
+    print("\nDynamic Routes:")
+    dynamic = getattr(app_instance, "_dynamic_routes", [])
+    for route in dynamic:
+        # Each route object usually has a 'rule' (regex) and 'method'
+        # Using getattr to be safe across minor versions
+        pattern = getattr(route, "rule", "unknown")
+        method = getattr(route, "method", "ANY")
+        target = getattr(route, "callback", lambda: None).__name__
+        print(f"  {method} {pattern} -> {target}")
+    print("------------------------------")
+"""

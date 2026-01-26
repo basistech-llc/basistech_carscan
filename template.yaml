@@ -1,131 +1,123 @@
+#
+# Deploy with:
+# sam deploy --profile fas
+# or put this in samconfig.toml:
+# [default.deploy.parameters]
+# profile = "fas"
+
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   License Plate Scanner (BasisTech/Brivo)
   Google OAuth, Server-side LPR, Secrets Manager
 
+Globals:
+  Function:
+    Architectures: [ arm64 ]
+    Environment:
+      Variables:
+        LOG_LEVEL: !Ref LogLevel
+        DEPLOYMENT_TIMESTAMP: !Ref DeploymentTimestamp
+        CALA_TABLE_NAME: cala-garage-scans
+
 Parameters:
   StageName:
     Type: String
-    Default: Staging
-  # Inputs for the secrets (You can pass these in `sam deploy --guided`)
-  GoogleClientId:
+    Default: stage
+    AllowedValues: [prod, stage]
+    Description: The deployment environment (prod or stage).
+  HostedZoneId:
+    Type: String
+    Description: Route53 Zone ID
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: (Optional) ACM Certificate ARN for the domain. Leave blank to auto-create.
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [CRITICAL, ERROR, WARNING, INFO, DEBUG, NOTSET]
+    Description: Default LOG_LEVEL environment value for the function
+  DeploymentTimestamp:
+    Type: String
+    Description: UTC timestamp of when the application was deployed.
+    Default: 'Not Set'
+  GoogleClientSecretArn:
     Type: String
     NoEcho: true
-    Description: "Google OAuth Client ID"
-  GoogleClientSecret:
+    Description: "Google OAuth Client Secret Arn"
+  BrivoApiKeyArn:
     Type: String
     NoEcho: true
-    Description: "Google OAuth Client Secret"
-  BrivoApiKey:
-    Type: String
-    NoEcho: true
-    Description: "Brivo API Key"
+    Description: "Brivo API Key Arn"
+
+Mappings:
+  EnvConfig:
+    prod:
+      DomainName: "v1.cybersecurity-policy.org"
+      StageName: "prod"
+      Description: "Cybersecurity Policy Home"
+      CustomDomainUrl: "https://v1.cybersecurity-policy.org/"
+    stage:
+      DomainName: "v2.cybersecurity-policy.org"
+      StageName: "stage"
+      Description: "Cybersecurity Policy Stage"
+      CustomDomainUrl: "https://v2.cybersecurity-policy.org/"
+
+Conditions:
+  CreateAcmCert: !Equals [!Ref CertificateArn, ""]
 
 Resources:
-  # --- Secrets Manager Resources ---
-  GoogleOAuthSecret:
-    Type: AWS::SecretsManager::Secret
+  HomeCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: CreateAcmCert
     Properties:
-      Name: !Sub "basistech/google-oauth-${StageName}"
-      Description: "Google OAuth Credentials for LPR App"
-      SecretString: !Sub '{"client_id": "${GoogleClientId}", "client_secret": "${GoogleClientSecret}"}'
+      DomainName: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+          HostedZoneId: !Ref HostedZoneId
 
-  BrivoAppSecret:
-    Type: AWS::SecretsManager::Secret
+  # HTTP API fronting the Lambda, bound to specified domain
+  MyHttpApi:
+    Type: AWS::Serverless::HttpApi
     Properties:
-      Name: !Sub "basistech/brivo-api-${StageName}"
-      Description: "Brivo API Key for LPR App"
-      SecretString: !Sub '{"api_key": "${BrivoApiKey}"}'
-
-  # --- S3 Bucket ---
-  UploadBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      LifecycleConfiguration:
-        Rules:
-          - Id: AutoDeleteAfterOneYear
-            Status: Enabled
-            ExpirationInDays: 365
       CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders: ['*']
-            AllowedMethods: [GET, PUT, POST]
-            AllowedOrigins: ['*']
+        AllowOrigins: ['*']
+        AllowMethods: ['GET','POST','OPTIONS']
+      Domain:
+        DomainName: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+        CertificateArn: !If [CreateAcmCert, !Ref HomeCertificate, !Ref CertificateArn]
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
 
-  # --- DynamoDB ---
-  HistoryTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      AttributeDefinitions:
-        - AttributeName: user_email
-          AttributeType: S
-        - AttributeName: sk
-          AttributeType: S
-      KeySchema:
-        - AttributeName: user_email
-          KeyType: HASH
-        - AttributeName: sk
-          KeyType: RANGE
-      BillingMode: PAY_PER_REQUEST
-
-  # --- Lambda Function ---
-  AppFunction:
+  MyWebFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Description: "API Gateway for Lambda Powertools application"
+      Runtime: python3.13
       CodeUri: src/
-      Handler: app.lambda_handler
-      Timeout: 20
-      MemorySize: 256
-      Runtime: python3.9
-      Environment:
-        Variables:
-          BUCKET_NAME: !Ref UploadBucket
-          TABLE_NAME: !Ref HistoryTable
-          GOOGLE_SECRET_ARN: !Ref GoogleOAuthSecret
-          BRIVO_SECRET_ARN: !Ref BrivoAppSecret
+      Handler: app.main.lambda_handler
+      Timeout: 60
+      MemorySize: 512
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref UploadBucket
         - DynamoDBCrudPolicy:
-            TableName: !Ref HistoryTable
+            TableName: cala-garage-scans
         - RekognitionDetectOnlyPolicy: {}
-        # Grant permission to read specific secrets
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource: 
-                - !Ref GoogleOAuthSecret
-                - !Ref BrivoAppSecret
       Events:
-        # (Events same as before)
-        Root:
-          Type: Api
+        ApiEvent:
+          Type: HttpApi
           Properties:
-            Path: /
-            Method: get
-        StaticAssets:
-          Type: Api
-          Properties:
-            Path: /static/{proxy+}
-            Method: get
-        AuthLogin:
-          Type: Api
-          Properties:
-            Path: /auth/login
-            Method: get
-        AuthCallback:
-          Type: Api
-          Properties:
-            Path: /auth/callback
-            Method: get
-        ApiAny:
-          Type: Api
-          Properties:
-            Path: /api/{proxy+}
-            Method: any
+            ApiId: !Ref MyHttpApi
+            Path: /{proxy+}
+            Method: ANY
 
 Outputs:
-  ApiURL:
-    Description: "API Gateway endpoint URL"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/"
+  ApiId:
+    Description: HTTP API ID
+    Value: !Ref MyHttpApi
+  URL:
+    Description: URL
+    Value: !FindInMap [EnvConfig, !Ref StageName, DomainName]
