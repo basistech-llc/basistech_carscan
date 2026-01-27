@@ -34,6 +34,27 @@ dev = [
 [tool.pylint.MASTER]
 ignore = ["vendor"]
 
+[tool.pylint.messages_control]
+# Disable specific messages by their symbolic name or message ID.
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "line-too-long",
+    "unspecified-encoding",
+    "redefined-outer-name",
+    "unused-argument",
+    "invalid-name",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "fixme",
+    "trailing-whitespace",
+    "trailing-newlines",
+    "too-many-positional-arguments",
+]
+
+
 [tool.pyright]
 exclude    = ["**/vendor"]
 

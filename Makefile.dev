@@ -17,7 +17,7 @@ LOCAL_HTTP_PORT ?= 8080
 LOG_LEVEL ?= DEBUG		# default to debug unless changed
 PYLINT_THRESHOLD ?= 10.0
 STATIC_DIR ?= src/app/static
-TEMPLATES_DIR = ?= src/app/templates
+TEMPLATES_DIR ?= src/app/templates
 
 # If AWS_REGION is defined, use it. Otherwise assume local configuration
 ifeq ($(AWS_REGION),)
@@ -172,8 +172,26 @@ run-local-api:
 ### JavaScript
 
 eslint:
-	if [ -d $(STATIC_DIR) ]; then (cd $(STATIC_DIR);make eslint) ; fi
-	if [ -d $(TEMPLATES_DIR) ]; then (cd $(TEMPLATES_DIR);make eslint) ; fi
+	@if command -v eslint >/dev/null 2>&1; then \
+		JS_FILES=""; \
+		if [ -d $(STATIC_DIR) ]; then \
+			for f in $(STATIC_DIR)/*.js; do \
+				if [ -f "$$f" ]; then JS_FILES="$$JS_FILES $$f"; fi; \
+			done; \
+		fi; \
+		if [ -d $(TEMPLATES_DIR) ]; then \
+			for f in $(TEMPLATES_DIR)/*.js; do \
+				if [ -f "$$f" ]; then JS_FILES="$$JS_FILES $$f"; fi; \
+			done; \
+		fi; \
+		if [ -n "$$JS_FILES" ]; then \
+			eslint $$JS_FILES; \
+		else \
+			echo "No JavaScript files found to lint"; \
+		fi; \
+	else \
+		echo "eslint not found, skipping JavaScript linting (install with: npm install -g eslint)"; \
+	fi
 
 jscoverage:
 	if [ -d $(STATIC_DIR) ]; then NODE_ENV=test NODE_PATH=$(STATIC_DIR) npm run coverage; NODE_PATH=$(STATIC_DIR) npm test ; fi

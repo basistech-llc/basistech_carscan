@@ -26,18 +26,22 @@ async function initCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             video.srcObject = stream;
-        } catch(e) {
+        } catch {
             alert("Camera access denied.");
         }
     }
 }
 
+// Used in HTML: onclick="showTab('scan')"
+// eslint-disable-next-line no-unused-vars
 function showTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.getElementById(`${tabName}-tab`).classList.add('active');
     if (tabName === 'history') loadHistory();
 }
 
+// Used in HTML: onclick="captureAndScan()"
+// eslint-disable-next-line no-unused-vars
 async function captureAndScan() {
     const context = canvas.getContext('2d');
     canvas.width = video.videoWidth;
@@ -60,15 +64,14 @@ async function captureAndScan() {
 
         await fetch(presignedData.url, { method: 'POST', body: formData });
 
-        // 3. Scan
-        doScan({
-            image_key: presignedData.fields.key,
-            state: stateSelect.value
-        });
+        // 3. Scan - poll for results
+        pollForResult(presignedData.job_id);
 
     }, 'image/jpeg');
 }
 
+// Used in HTML: onclick="manualSearch()"
+// eslint-disable-next-line no-unused-vars
 async function manualSearch() {
     const text = document.getElementById('manual-plate').value;
     if(!text) return;
@@ -94,6 +97,7 @@ async function manualSearch() {
 
 /**
  * Polling loop to check DynamoDB status
+ * Called from captureAndScan() after image upload
  */
 async function pollForResult(jobId) {
     showResult("Processing...", "Analyzing Image...", null);
