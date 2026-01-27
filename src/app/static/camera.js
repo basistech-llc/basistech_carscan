@@ -72,47 +72,73 @@ async function captureAndScan() {
 async function manualSearch() {
     const text = document.getElementById('manual-plate').value;
     if(!text) return;
-    doScan({
-        manual_text: text,
-        state: stateSelect.value
+
+    showResult("Processing...", "Checking manual entry...", null);
+
+    const res = await apiCall('api/manual', {
+        method: 'POST',
+        body: JSON.stringify({
+            plate: text,
+            state: stateSelect.value
+        })
     });
+
+    if (res.ok) {
+        const { data } = await res.json();
+        const found = data.result !== "Unknown";
+        showResult(data.result, `${data.plate} (${data.state})`, found);
+    } else {
+        showResult("Error", "Could not save manual entry", false);
+    }
 }
 
-async function doScan(payload) {
+/**
+ * Polling loop to check DynamoDB status
+ */
+async function pollForResult(jobId) {
     showResult("Processing...", "Analyzing Image...", null);
 
-    const res = await apiCall('api/scan', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-    });
-    const { job_id } = await res.json();
-
-    // Poll for results
     const poll = setInterval(async () => {
-        const statusRes = await apiCall(`api/status/${job_id}`);
-        const statusData = await statusRes.json();
+        try {
+            // job_id contains slashes, must be encoded
+            const statusRes = await apiCall(`api/status/${encodeURIComponent(jobId)}`);
+            const statusData = await statusRes.json();
 
-        if (statusData.status === 'complete') {
-            clearInterval(poll);
-            const data = statusData.data;
-            const found = data.result !== "Not Found";
-            showResult(data.result, `${data.plate}`, found);
+            if (statusData.status === 'complete') {
+                clearInterval(poll);
+                const data = statusData.data;
+                const found = data.result !== "Unknown" && data.plate !== "NOT_FOUND";
+                showResult(data.result, `${data.plate} (${data.state})`, found);
+            }
+        } catch (e) {
+            console.error("Polling error", e);
         }
     }, 1500);
+
+    // Timeout after 30 seconds
+    setTimeout(() => {
+        clearInterval(poll);
+    }, 30000);
 }
 
+/**
+ * UI Display Helper
+ */
 function showResult(title, subtitle, isSuccess) {
     const box = document.getElementById('result-display');
-    box.className = 'result-box'; // reset
+    box.className = 'result-box';
     if (isSuccess === true) box.classList.add('success');
     if (isSuccess === false) box.classList.add('failure');
-    if (isSuccess === null) box.classList.add('processing'); // Grey/Loading state
+    if (isSuccess === null) box.classList.add('processing');
 
     box.classList.remove('hidden');
     document.getElementById('result-name').innerText = title;
     document.getElementById('result-details').innerText = subtitle;
 }
 
+/**
+ * History Loader
+ */
 async function loadHistory() {
     const res = await apiCall('api/history');
     if(res.status === 401) return window.location.reload();
@@ -126,7 +152,7 @@ async function loadHistory() {
                 <span>${item.plate} (${item.state})</span>
             </div>
             <div class="h-sub">
-                ${new Date(parseInt(item.sk.split('#')[1])*1000).toLocaleString()}
+                ${new Date(item.timestamp * 1000).toLocaleString()}
             </div>
         </li>
     `).join('');

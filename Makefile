@@ -47,4 +47,13 @@ install-ubuntu:
 	npm ci
 	make install
 
+# Simulate an S3 EventBridge trigger for local testing
+local-s3-event:
+	@echo "Simulating S3 Object Created event for $(JOB_ID)..."
+	@jq -n --arg bucket "$(LOCAL_BUCKET)" --arg key "$(JOB_ID)" \
+		'{ "source": "aws.s3", "detail": { "bucket": { "name": $$bucket }, "object": { "key": $$key } } }' \
+		> temp_event.json
+	aws lambda invoke --function-name $(FUNCTION_NAME) --payload file://temp_event.json --endpoint-url http://localhost:3001 out.json
+	@rm temp_event.json
+
 ################################################################
