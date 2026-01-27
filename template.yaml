@@ -20,7 +20,7 @@ Globals:
         DEPLOYMENT_TIMESTAMP: !Ref DeploymentTimestamp
         TABLE_NAME: !Ref MyTable
         BUCKET_NAME: !Ref UploadBucket
-        GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArt
+        GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArn
         BRIVO_SECRET_ARN: !Ref BrivoApiKeyArn
 
 Parameters:
@@ -114,7 +114,22 @@ Resources:
         - S3CrudPolicy:
             BucketName: !Ref UploadBucket
         - DynamoDBCrudPolicy:
-            TableName: cala-garage-scans
+            TableName: !Ref MyTable
+  MyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cala-garage-scans
+      AttributeDefinitions:
+        - AttributeName: user_email
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_email
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
         - RekognitionDetectOnlyPolicy: {}
       Events:
         ApiEvent:
@@ -136,6 +151,11 @@ Resources:
                   name: [ !Ref UploadBucket ]
                 object:
                   key: [ { "prefix": "uploads/" } ]
+        HeartbeatEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
 
 Outputs:
   ApiId:

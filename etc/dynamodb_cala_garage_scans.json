@@ -1,0 +1,15 @@
+{
+    "TableName": "cala-garage-scans",
+    "KeySchema": [
+        { "AttributeName": "user_email", "KeyType": "HASH" },
+        { "AttributeName": "sk", "KeyType": "RANGE" }
+    ],
+    "AttributeDefinitions": [
+        { "AttributeName": "user_email", "AttributeType": "S" },
+        { "AttributeName": "sk", "AttributeType": "S" }
+    ],
+    "ProvisionedThroughput": {
+        "ReadCapacityUnits": 5,
+        "WriteCapacityUnits": 5
+    }
+}
