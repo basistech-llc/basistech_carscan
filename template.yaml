@@ -117,6 +117,8 @@ Resources:
             TableName: !Ref MyTable
   MyTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: cala-garage-scans
       AttributeDefinitions:
@@ -130,6 +132,8 @@ Resources:
         - AttributeName: sk
           KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
         - RekognitionDetectOnlyPolicy: {}
       Events:
         ApiEvent:
