@@ -244,7 +244,7 @@ endif
 
 delete-tables:
 ifeq ($(AWS_REGION),local)
-	for fn in etc/dynamodb_*.json ; do aws dynamodb delete-table --table-name $$(echo $$fn | sed s:etc/dynamodb_:: | sed s:.json::) ; done
+	for fn in etc/dynamodb_*.json ; do aws dynamodb delete-table --table-name $$(echo $$fn | sed s:etc/dynamodb_:: | sed s:.json::) 2>/dev/null || true ; done
 endif
 	aws dynamodb list-tables --output text
 

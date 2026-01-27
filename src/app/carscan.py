@@ -7,7 +7,7 @@ from typing import Any, Dict
 import boto3
 from boto3.dynamodb.conditions import Key
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import Router
+from aws_lambda_powertools.event_handler.router import Router
 
 from . import brivo
 
@@ -15,10 +15,26 @@ logger = Logger(child=True)
 router = Router()  # pylint: disable=not-callable
 
 # Initialize AWS clients
-s3_client = boto3.client("s3")
+# Use local endpoints if AWS_REGION is "local"
+_aws_region = os.environ.get("AWS_REGION", "")
+_use_local = _aws_region == "local"
+
+_s3_config = {}
+_dynamodb_config = {}
+if _use_local:
+    _s3_endpoint = os.environ.get("AWS_ENDPOINT_URL_S3", "http://localhost:9100/")
+    _dynamodb_endpoint = os.environ.get("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8010/")
+    if _s3_endpoint:
+        _s3_config["endpoint_url"] = _s3_endpoint
+    if _dynamodb_endpoint:
+        _dynamodb_config["endpoint_url"] = _dynamodb_endpoint
+
+s3_client = boto3.client("s3", **_s3_config)
 rekognition = boto3.client("rekognition")
-dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(os.environ["TABLE_NAME"])
+dynamodb = boto3.resource("dynamodb", **_dynamodb_config)
+# Table name from environment, with fallback for testing
+_table_name = os.environ.get("TABLE_NAME", "test-table")
+table = dynamodb.Table(_table_name)
 
 
 # --- API Routes ---

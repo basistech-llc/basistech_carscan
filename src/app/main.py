@@ -42,6 +42,7 @@ def check_auth(
 
 # Protect all routes inside the /api prefix
 app.include_router(carscan_router, prefix="/api")
+# Apply auth middleware to the router
 carscan_router.use(middlewares=[check_auth])
 
 
