@@ -7,8 +7,6 @@ Secrets Manager calls. Replace this function with a real implementation
 when Brivo integration is ready.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Final
 
