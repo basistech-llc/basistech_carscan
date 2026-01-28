@@ -1,15 +1,8 @@
-#
-# Deploy with:
-# sam deploy --profile fas
-# or put this in samconfig.toml:
-# [default.deploy.parameters]
-# profile = "fas"
-
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   License Plate Scanner (BasisTech/Brivo)
-  Google OAuth, Server-side LPR, Secrets Manager
+  Now using direct parameters for Domain management.
 
 Globals:
   Function:
@@ -28,65 +21,83 @@ Parameters:
     Type: String
     Default: stage
     AllowedValues: [prod, stage]
-    Description: The deployment environment (prod or stage).
+    Description: The deployment environment (e.g., prod, stage, dev).
+  
+  CustomDomainName:
+    Type: String
+    Description: "The full domain name (e.g., v2.cybersecurity-policy.org)"
+
   HostedZoneId:
     Type: String
-    Description: Route53 Zone ID
+    Description: "Route53 Hosted Zone ID for domain validation and DNS records."
+
   CertificateArn:
     Type: String
     Default: ""
-    Description: (Optional) ACM Certificate ARN for the domain. Leave blank to auto-create.
+    Description: "(Optional) Existing ACM Certificate ARN. Leave blank to auto-create one for CustomDomainName."
+
   LogLevel:
     Type: String
     Default: INFO
     AllowedValues: [CRITICAL, ERROR, WARNING, INFO, DEBUG, NOTSET]
-    Description: Default LOG_LEVEL environment value for the function
+
   DeploymentTimestamp:
     Type: String
-    Description: UTC timestamp of when the application was deployed.
     Default: 'Not Set'
+    Description: "Deployment UTC timestamp."
+
   GoogleClientSecretArn:
     Type: String
-    Description: "Google OAuth Client Secret Arn"
+    Description: "ARN of the Google OAuth Secret in Secrets Manager"
+
   BrivoApiKeyArn:
     Type: String
-    Description: "Brivo API Key Arn"
-
-Mappings:
-  EnvConfig:
-    prod:
-      DomainName: "v1.cybersecurity-policy.org"
-      StageName: "prod"
-      Description: "Cybersecurity Policy Home"
-      CustomDomainUrl: "https://v1.cybersecurity-policy.org/"
-    stage:
-      DomainName: "v2.cybersecurity-policy.org"
-      StageName: "stage"
-      Description: "Cybersecurity Policy Stage"
-      CustomDomainUrl: "https://v2.cybersecurity-policy.org/"
+    Description: "ARN of the Brivo API Key in Secrets Manager"
 
 Conditions:
+  # Logic: If CertificateArn is empty, we create a new one
   CreateAcmCert: !Equals [!Ref CertificateArn, ""]
 
 Resources:
+  # --- Storage ---
   UploadBucket:
     Type: AWS::S3::Bucket
     Properties:
-      # Required for EventBridge triggers
       NotificationConfiguration:
         EventBridgeConfiguration:
           EventBridgeEnabled: true
+
+  MyTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "cala-garage-scans-${StageName}" # Added suffix to avoid collisions
+      AttributeDefinitions:
+        - AttributeName: user_email
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_email
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # --- Infrastructure / Networking ---
   HomeCertificate:
     Type: AWS::CertificateManager::Certificate
     Condition: CreateAcmCert
     Properties:
-      DomainName: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+      DomainName: !Ref CustomDomainName
       ValidationMethod: DNS
       DomainValidationOptions:
-        - DomainName: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+        - DomainName: !Ref CustomDomainName
           HostedZoneId: !Ref HostedZoneId
 
-  # HTTP API fronting the Lambda, bound to specified domain
   MyHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -94,15 +105,17 @@ Resources:
         AllowOrigins: ['*']
         AllowMethods: ['GET','POST','OPTIONS']
       Domain:
-        DomainName: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+        DomainName: !Ref CustomDomainName
+        # Use the auto-created cert OR the one provided in parameters
         CertificateArn: !If [CreateAcmCert, !Ref HomeCertificate, !Ref CertificateArn]
         Route53:
           HostedZoneId: !Ref HostedZoneId
 
+  # --- Compute ---
   MyWebFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: "API Gateway for Lambda Powertools application"
+      Description: !Sub "API Gateway for ${StageName} environment"
       Runtime: python3.13
       CodeUri: src/
       Handler: app.main.lambda_handler
@@ -136,30 +149,12 @@ Resources:
           Properties:
             Schedule: rate(5 minutes)
             Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
-  MyTable:
-    Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      TableName: cala-garage-scans
-      AttributeDefinitions:
-        - AttributeName: user_email
-          AttributeType: S
-        - AttributeName: sk
-          AttributeType: S
-      KeySchema:
-        - AttributeName: user_email
-          KeyType: HASH
-        - AttributeName: sk
-          KeyType: RANGE
-      BillingMode: PAY_PER_REQUEST
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
 
 Outputs:
-  ApiId:
-    Description: HTTP API ID
-    Value: !Ref MyHttpApi
-  URL:
-    Description: URL
-    Value: !FindInMap [EnvConfig, !Ref StageName, DomainName]
+  ApiEndpoint:
+    Description: "The custom domain URL for your API"
+    Value: !Sub "https://${CustomDomainName}/"
+  
+  StackRegion:
+    Description: "Region this stack is deployed to"
+    Value: !Ref "AWS::Region"
