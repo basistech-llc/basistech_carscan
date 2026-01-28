@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+    
+    - name: Install Python dependencies
+      run: poetry install
+    
+    - name: Install Java (for DynamoDB Local)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+    
+    - name: Install AWS CLI
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+    
+    - name: Install DynamoDB Local
+      run: make bin/DynamoDBLocal.jar
+    
+    - name: Install MinIO
+      run: make bin/minio
+    
+    - name: Start DynamoDB Local and MinIO
+      run: |
+        export AWS_REGION=local
+        export AWS_ENDPOINT_URL_DYNAMODB=http://localhost:8010/
+        export AWS_ENDPOINT_URL_S3=http://localhost:9100/
+        export AWS_ACCESS_KEY_ID=minioadmin
+        export AWS_SECRET_ACCESS_KEY=minioadmin
+        export LOCAL_BUCKET=test-bucket
+        make start_local_dynamodb
+        sleep 5
+        make start_local_minio
+        sleep 5
+        make make-local-bucket
+    
+    - name: Run full test suite
+      run: make check
+      env:
+        AWS_REGION: local
+        AWS_ENDPOINT_URL_DYNAMODB: http://localhost:8010/
+        AWS_ENDPOINT_URL_S3: http://localhost:9100/
+        AWS_ACCESS_KEY_ID: minioadmin
+        AWS_SECRET_ACCESS_KEY: minioadmin
+        LOCAL_BUCKET: test-bucket
+        TABLE_NAME: cala-garage-scans
+        BUCKET_NAME: test-bucket
+        LOG_LEVEL: DEBUG
+    
+    - name: Stop services
+      if: always()
+      run: |
+        make stop_local_dynamodb || true
+        make stop_local_minio || true

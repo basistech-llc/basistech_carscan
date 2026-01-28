@@ -1,0 +1,16 @@
+{
+  "name": "basistech-carscan",
+  "version": "0.1.0",
+  "description": "CarScan License Plate Recognition System",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/camera.test.js",
+    "lint": "eslint src/app/static/*.js src/app/templates/*.js || true",
+    "coverage": "c8 --include='src/app/static/*.js' --reporter=text --reporter=lcov node tests/camera.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3",
+    "c8": "^10.1.3"
+  }
+}

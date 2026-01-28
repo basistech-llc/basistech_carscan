@@ -32,9 +32,28 @@ if _use_local:
 s3_client = boto3.client("s3", **_s3_config)
 rekognition = boto3.client("rekognition")
 dynamodb = boto3.resource("dynamodb", **_dynamodb_config)
-# Table name from environment, with fallback for testing
-_table_name = os.environ.get("TABLE_NAME", "test-table")
-table = dynamodb.Table(_table_name)
+
+
+def _get_table():
+    """Get the DynamoDB table, reading table name from environment dynamically."""
+    table_name = os.environ.get("TABLE_NAME", "test-table")
+    return dynamodb.Table(table_name)
+
+
+# Lazy table accessor - reads table name from environment each time it's accessed
+class _LazyTable:
+    """Lazy table accessor that reads table name from environment each time."""
+
+    def __getattr__(self, name):
+        # Delegate all attribute access to the dynamically-created table
+        return getattr(_get_table(), name)
+
+    def __call__(self, *args, **kwargs):
+        # Handle if table is called as a function (shouldn't happen, but be safe)
+        return _get_table()(*args, **kwargs)
+
+
+table = _LazyTable()
 
 
 # --- API Routes ---
@@ -42,7 +61,11 @@ table = dynamodb.Table(_table_name)
 @router.get("/upload-url")
 def get_upload_params() -> Dict[str, Any]:
     """Generate a presigned S3 POST URL with user identity in metadata."""
+    # Get user_email from router context (set by middleware)
     user = router.context.get("user_email")
+    if not user:
+        # If context not set, this is an error - middleware should have set it
+        raise ValueError("user_email not found in context - authentication failed")
     state = router.current_event.query_string_parameters.get("state", "MA")
 
     # Create a unique job ID based on timestamp and user
@@ -71,7 +94,7 @@ def get_scan_status(job_id: str) -> Dict[str, Any]:
     """Polled by the frontend to check if LPR is complete."""
     user = router.context.get("user_email")
 
-    response = table.get_item(
+    response = _get_table().get_item(
         Key={
             "user_email": user,
             "sk": f"job#{job_id}",
@@ -89,7 +112,11 @@ def get_scan_status(job_id: str) -> Dict[str, Any]:
 def get_user_history() -> list:
     """Return the last 50 scans for the logged-in user."""
     user = router.context.get("user_email")
-    resp = table.query(
+    if not user:
+        # If context not set, this is an error - middleware should have caught this
+        # But if it somehow got through, return empty list
+        return []
+    resp = _get_table().query(
         KeyConditionExpression=Key("user_email").eq(user),
         ScanIndexForward=False,
         Limit=50,
@@ -101,6 +128,9 @@ def get_user_history() -> list:
 def manual_entry() -> Dict[str, Any]:
     """Handle manual plate entry so it appears in history."""
     user = router.context.get("user_email")
+    if not user:
+        # If context not set, this is an error
+        raise ValueError("user_email not found in context - authentication failed")
     body = router.current_event.json_body
 
     plate = body.get("plate", "").upper()
@@ -121,7 +151,7 @@ def manual_entry() -> Dict[str, Any]:
         "timestamp": int(time.time()),
         "image_key": "manual",
     }
-    table.put_item(Item=item)
+    _get_table().put_item(Item=item)
 
     return {"status": "complete", "data": item}
 
@@ -160,7 +190,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         result_name = brivo.brivo_lookup(plate, state)
 
         # 4. Save record for frontend polling and history
-        table.put_item(
+        _get_table().put_item(
             Item={
                 "user_email": user,
                 "sk": f"job#{key}",

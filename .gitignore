@@ -1,1 +1,11 @@
 .DS_Store
+*.jar
+*.zip
+bin/DynamoDBLocal_lib/
+bin/minio
+coverage/
+logs/
+**/__pycache__
+var/
+node_modules/
+dynamodb-local-metadata.json

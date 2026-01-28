@@ -33,17 +33,22 @@ def check_auth(
 
     try:
         email = cookie.split("user_session=")[1].split(";")[0]
+        # When middleware is applied to a router, app_instance is the router
+        # Set context on the router so router.context.get() can access it
         app_instance.append_context(user_email=email)
+        # Also set it directly on router.context dict to ensure it's accessible
+        if hasattr(app_instance, 'context') and isinstance(app_instance.context, dict):
+            app_instance.context['user_email'] = email
     except Exception:  # pylint: disable=broad-except
         return Response(status_code=401, body="Invalid Session")
 
     return next_middleware(app_instance)
 
 
+# Apply auth middleware to the router BEFORE including it
+carscan_router.use(middlewares=[check_auth])
 # Protect all routes inside the /api prefix
 app.include_router(carscan_router, prefix="/api")
-# Apply auth middleware to the router
-carscan_router.use(middlewares=[check_auth])
 
 
 @app.get("/")

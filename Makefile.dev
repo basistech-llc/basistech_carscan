@@ -51,6 +51,7 @@ all:
 	make run-local
 
 check:
+	make ensure-local-services
 	make lint
 	make pytest
 	make jscoverage
@@ -126,15 +127,11 @@ flake: $(PYR)
 ## set LOG_LEVEL at start of CLI to change the  log level
 
 pytest: $(PYR)
-	make create-tables || echo tables already exist
 	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests
-	make delete-tables
 
 
 pytest-coverage: $(PYR)
-	make create-tables || echo tables already exist
 	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) --cov=. --cov-report=xml --cov-report=html tests
-	make delete-tables
 
 pytest-selenium: $(PYR)
 	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests/sitetitle_test.py
@@ -217,7 +214,16 @@ jstest-debug:
 # DynamoDBLocal
 # Installations are used by the CI pipeline and by local developers
 # See https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html for info about DynamoDB (local version)
-.PHONY: start_local_dynamodb stop_local_dynamodb list-tables
+.PHONY: start_local_dynamodb stop_local_dynamodb list-tables ensure-local-services
+
+ensure-local-services:
+	@# Ensure DynamoDB Local is running and tables exist
+	@if [ "$(AWS_REGION)" = "local" ]; then \
+		echo "Ensuring local services are ready..."; \
+		make create-tables || true; \
+		make make-local-bucket; \
+		echo "Local services ready."; \
+	fi
 
 # installation:
 bin/dynamodb_local_latest.zip:
@@ -238,8 +244,25 @@ stop_local_dynamodb:  bin/DynamoDBLocal.jar
 
 create-tables:
 ifeq ($(AWS_REGION),local)
-	for fn in etc/dynamodb_*.json ; do aws dynamodb create-table --cli-input-json file://$$fn ; done
-	aws dynamodb list-tables --output text
+	@if [ ! -d etc ] || [ -z "$$(ls etc/dynamodb_*.json 2>/dev/null)" ]; then \
+		echo "No DynamoDB schema files found in etc/"; \
+		exit 0; \
+	fi
+	@for fn in etc/dynamodb_*.json ; do \
+		TABLE_NAME=$$(jq -r '.TableName' $$fn 2>/dev/null); \
+		if [ -z "$$TABLE_NAME" ]; then \
+			echo "Warning: Could not extract TableName from $$fn"; \
+			continue; \
+		fi; \
+		if aws dynamodb describe-table --table-name $$TABLE_NAME >/dev/null 2>&1; then \
+			echo "Table $$TABLE_NAME already exists"; \
+		else \
+			echo "Creating table $$TABLE_NAME from $$fn"; \
+			aws dynamodb create-table --cli-input-json file://$$fn 2>&1 || echo "Failed to create table $$TABLE_NAME (may already exist)"; \
+		fi; \
+	done
+	@echo "Current tables:"
+	@aws dynamodb list-tables --output text 2>/dev/null || echo "Could not list tables"
 endif
 
 delete-tables:
@@ -294,14 +317,19 @@ list-local-buckets:
 	$(AWS_VARS) aws s3 ls
 
 make-local-bucket:
-	if $(AWS_VARS) aws s3 ls s3://$(LOCAL_BUCKET)/ >/dev/null 2>&1; then \
-	 	echo $(LOCAL_BUCKET) exists ; \
+	@BUCKET_NAME=$${BUCKET_NAME:-$(LOCAL_BUCKET)}; \
+	if [ -z "$$BUCKET_NAME" ]; then \
+		echo "Warning: BUCKET_NAME not set, using default $(LOCAL_BUCKET)"; \
+		BUCKET_NAME=$(LOCAL_BUCKET); \
+	fi; \
+	if $(AWS_VARS) aws s3 ls s3://$$BUCKET_NAME/ >/dev/null 2>&1; then \
+	 	echo "Bucket $$BUCKET_NAME exists"; \
 	else \
-		echo creating s3://$(LOCAL_BUCKET)/ ; \
-		$(AWS_VARS) aws s3 mb s3://$(LOCAL_BUCKET)/ ; \
+		echo "Creating bucket s3://$$BUCKET_NAME/"; \
+		$(AWS_VARS) aws s3 mb s3://$$BUCKET_NAME/ 2>&1 || echo "Failed to create bucket $$BUCKET_NAME (may already exist)"; \
 	fi
-	echo local buckets:
-	$(AWS_VARS) aws s3 ls
+	@echo "Local buckets:"
+	@$(AWS_VARS) aws s3 ls 2>/dev/null || echo "Could not list buckets"
 
 .PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
 
