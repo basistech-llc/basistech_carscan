@@ -21,6 +21,7 @@ TEMPLATES_DIR ?= src/app/templates
 
 # If AWS_REGION is defined, use it. Otherwise assume local configuration
 ifeq ($(AWS_REGION),)
+    $(warning AWS_REGION is not set. Defaulting to local MinIO/DynamoDB configuration.)
     export AWS_REGION                ?= local
     export AWS_ACCESS_KEY_ID         ?= minioadmin
     export AWS_SECRET_ACCESS_KEY     ?= minioadmin
@@ -332,6 +333,27 @@ make-local-bucket:
 	@$(AWS_VARS) aws s3 ls 2>/dev/null || echo "Could not list buckets"
 
 .PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
+
+################################################################
+### build and deploy
+build:
+	poetry run pylint src/
+	poetry export -f requirements.txt --output src/app/requirements.txt --without-hashes
+	sam build
+
+deploy: build
+	sam deploy
+
+deploy-guided: build
+	sam deploy --guided
+
+list-domains:
+	printenv | grep AWS
+	aws route53 list-hosted-zones   --query "HostedZones[].{Domain:Name, ID:Id}"   --output table
+
+who-am-i:
+	printenv | grep AWS
+	aws sts get-caller-identity
 
 ################################################################
 ### Compile JavaScript to TypeScript

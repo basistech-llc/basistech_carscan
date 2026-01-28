@@ -47,11 +47,9 @@ Parameters:
     Default: 'Not Set'
   GoogleClientSecretArn:
     Type: String
-    NoEcho: true
     Description: "Google OAuth Client Secret Arn"
   BrivoApiKeyArn:
     Type: String
-    NoEcho: true
     Description: "Brivo API Key Arn"
 
 Mappings:
@@ -115,6 +113,29 @@ Resources:
             BucketName: !Ref UploadBucket
         - DynamoDBCrudPolicy:
             TableName: !Ref MyTable
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref MyHttpApi
+            Path: /{proxy+}
+            Method: ANY
+        S3UploadEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: [ "aws.s3" ]
+              detail-type: [ "Object Created" ]
+              detail:
+                bucket:
+                  name: [ !Ref UploadBucket ]
+                object:
+                  key: [ { "prefix": "uploads/" } ]
+        HeartbeatEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
   MyTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -134,32 +155,6 @@ Resources:
       BillingMode: PAY_PER_REQUEST
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
-        - RekognitionDetectOnlyPolicy: {}
-      Events:
-        ApiEvent:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref MyHttpApi
-            Path: /{proxy+}
-            Method: ANY
-        # S3 Upload Trigger via EventBridge
-        S3UploadEvent:
-          Type: EventBridgeRule
-          Properties:
-            InputPath: $.detail
-            Pattern:
-              source: [ "aws.s3" ]
-              detail-type: [ "Object Created" ]
-              detail:
-                bucket:
-                  name: [ !Ref UploadBucket ]
-                object:
-                  key: [ { "prefix": "uploads/" } ]
-        HeartbeatEvent:
-          Type: Schedule
-          Properties:
-            Schedule: rate(5 minutes)
-            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
 
 Outputs:
   ApiId:

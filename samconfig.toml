@@ -1,0 +1,13 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "carscan1"
+resolve_s3 = true
+s3_prefix = "carscan1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "StageName=\"stage\" HostedZoneId=\"Z0950780134Y0X5TJ10JZ\" CertificateArn=\"arn1\" LogLevel=\"DEBUG\" DeploymentTimestamp=\"Not Set\" GoogleClientSecretArn=\"arn2\" BrivoApiKeyArn=\"arn3\""
+image_repositories = []
+confirm_changeset = true
+
+[default.global.parameters]
+region = "us-east-1"
