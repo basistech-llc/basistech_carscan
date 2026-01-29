@@ -4,10 +4,10 @@ import requests
 from app import oidc
 
 
-def test_end_to_end_oidc_stateless(fake_idp_server):
+def test_end_to_end_oidc_stateless(mock_oidc_idp):
     """End-to-end OIDC flow: build auth URL, simulate IdP redirect, exchange code and verify claims."""
     cfg = oidc.load_openid_config(
-        fake_idp_server["discovery"],
+        mock_oidc_idp["discovery"],
         client_id="client-123",
         redirect_uri="https://app.example.org/auth/callback",
     )

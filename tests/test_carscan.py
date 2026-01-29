@@ -1,5 +1,6 @@
 """Tests for CarScan Lambda functions."""
 
+import base64
 import json
 from unittest.mock import patch
 
@@ -7,6 +8,57 @@ from boto3.dynamodb.conditions import Key
 
 from app.carscan import s3_client, table
 from app.main import lambda_handler
+
+
+def _http_event(method: str, path: str, headers: dict | None = None):
+    """Build HTTP API v2 event for method and path (no pathParameters for explicit routes)."""
+    return {
+        "version": "2.0",
+        "routeKey": f"{method} {path}",
+        "rawPath": path if path.startswith("/") else f"/{path}",
+        "rawQueryString": "",
+        "headers": headers or {},
+        "requestContext": {
+            "routeKey": f"{method} {path}",
+            "http": {
+                "method": method,
+                "path": path if path.startswith("/") else f"/{path}",
+                "protocol": "HTTP/1.1",
+            },
+            "stage": "$default",
+            "requestId": "test-request-id",
+            "timeEpoch": 1428582896000,
+        },
+        "queryStringParameters": None,
+        "pathParameters": None,
+        "isBase64Encoded": False,
+    }
+
+
+def test_get_root_without_cookie_returns_landing():
+    """GET / without user_session cookie returns landing page (200 HTML)."""
+    ev = _http_event("GET", "/")
+    ev["pathParameters"] = {"proxy": ""}  # API Gateway proxy+ sends this for /
+    response = lambda_handler(ev, {})
+    assert response["statusCode"] == 200
+    assert "text/html" in response.get("headers", {}).get("contentType", response.get("headers", {}).get("Content-Type", ""))
+    body = response.get("body", "")
+    if response.get("isBase64Encoded"):
+        body = base64.b64decode(body).decode()
+    assert "landing" in body.lower() or "Google" in body or "Login" in body
+
+
+def test_get_hello_without_cookie_returns_json():
+    """GET /hello without cookie returns Hello world JSON (no auth required)."""
+    ev = _http_event("GET", "/hello")
+    ev["pathParameters"] = {"proxy": "hello"}
+    response = lambda_handler(ev, {})
+    assert response["statusCode"] == 200
+    body = response.get("body", "")
+    if response.get("isBase64Encoded"):
+        body = base64.b64decode(body).decode()
+    data = json.loads(body)
+    assert data.get("message") == "Hello world!"
 
 
 def test_auth_middleware_denial(api_event):

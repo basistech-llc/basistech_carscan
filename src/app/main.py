@@ -1,22 +1,24 @@
 """Lambda entrypoint and global routing setup for CarScan."""
 
+import os
+import logging
+import time
+import json
 from pathlib import Path
 from typing import Any, Callable, Dict
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import (
-    APIGatewayHttpResolver,
-    Response,
-    content_types,
-)
+from aws_lambda_powertools.event_handler import APIGatewayHttpResolver, Response, content_types
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
 from .carscan import router as carscan_router, handle_s3_event
 from . import oidc as oidc_module
 
-# Logger automatically picks up LOG_LEVEL from template.yaml globals
-logger = Logger(service="CarScanMain")
-app = APIGatewayHttpResolver()
-
+logger = Logger(service="APP") # Automatically picks up LOG_LEVEL from env
+logger.setLevel(logging.INFO)
+app = APIGatewayHttpResolver(enable_validation=False)
+template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+jinja_env = Environment(loader=FileSystemLoader(template_dir))
 
 def _get_email_from_cookie(headers: Dict[str, str]) -> str | None:
     """Extract user email from user_session cookie, or return None."""
@@ -29,16 +31,14 @@ def _get_email_from_cookie(headers: Dict[str, str]) -> str | None:
         return None
 
 
-def check_auth(
-    app_instance: APIGatewayHttpResolver, next_middleware: Callable
-) -> Response:
+def check_auth(app_instance: APIGatewayHttpResolver, next_middleware: Callable) -> Response:
     """Verify user_session cookie (set after OIDC login) and inject email into context."""
     email = _get_email_from_cookie(app_instance.current_event.headers)
     if not email:
         return Response(
             status_code=401,
             content_type=content_types.APPLICATION_JSON,
-            body='{"error":"Unauthorized"}',
+            body=json.dumps({"error": "Unauthorized", "t": time.time()}),
         )
     app_instance.append_context(user_email=email)
     if hasattr(app_instance, "context") and isinstance(app_instance.context, dict):
@@ -46,9 +46,18 @@ def check_auth(
     return next_middleware(app_instance)
 
 
-# Apply auth middleware to the router BEFORE including it
-carscan_router.use(middlewares=[check_auth])
-# Protect all routes inside the /api prefix
+def conditional_api_auth(app_instance: APIGatewayHttpResolver, next_middleware: Callable) -> Response:
+    """Run check_auth only for /api/* so that include_router does not apply auth globally."""
+    path = getattr(app_instance.current_event, "path", None) or getattr(
+        app_instance.current_event, "raw_path", ""
+    ) or "/"
+    if path.startswith("/api"):
+        return check_auth(app_instance, next_middleware)
+    return next_middleware(app_instance)
+
+
+# Apply auth only for /api/* (include_router merges router middlewares into app globally)
+app.use(middlewares=[conditional_api_auth])
 app.include_router(carscan_router, prefix="/api")
 
 
@@ -105,6 +114,17 @@ def auth_callback() -> Response:
         )
 
 
+@app.get("/hello")
+def hello() -> dict:
+    return {"message": "Hello world!"}
+
+@app.get("/hello/<name>")
+def hello_name(name):
+    logger.info(f"Request from {name} received")
+    return {"message": f"hello {name}!"}
+
+
+
 @app.get("/")
 def serve_index() -> Response:
     """Serve landing page if unauthenticated, otherwise the camera app."""
@@ -124,6 +144,38 @@ def serve_index() -> Response:
         logger.error("Failed to load template %s: %s", template_name, exc)
         return Response(status_code=404, body="Not Found")
 
+def render_dynamic_template(template_name: str) -> Response:
+    """Helper to find a template, inject query params, and return a Response."""
+    # Extract query parameters to pass to the template automatically
+    # Example: ?name=Bob becomes {{ name }} in the template
+    query_params = app.current_event.query_string_parameters or {}
+
+    try:
+        template = jinja_env.get_template(template_name)
+        html = template.render(**query_params, path_name=template_name)
+        return Response(
+            status_code=200,
+            content_type=content_types.TEXT_HTML,
+            body=html
+        )
+    except TemplateNotFound:
+        logger.warning(f"Template not found: {template_name}")
+        return Response(
+            status_code=404,
+            body="404 - Page Not Found",
+            content_type=content_types.TEXT_PLAIN
+        )
+
+
+
+@app.get("/<proxy+>")
+def catch_all_templates(proxy):
+    """
+    Greedy route that catches any other path and tries to find
+    a matching .html file in the templates folder.
+    """
+    logger.info("catch_all_templates(%s)", proxy)
+    return render_dynamic_template(proxy)
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Any:
     """
@@ -142,4 +194,3 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Any:
         return {"warmed": True}
 
     return app.resolve(event, context)
-

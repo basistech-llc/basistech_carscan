@@ -63,3 +63,8 @@ upload-google-oidc-secret:
 	aws secretsmanager create-secret \
 	--name google-oidc-secret \
 	--secret-string file://secrets/google_oidc_secret.json
+
+upload-brivo-oidc-secret:
+	aws secretsmanager create-secret \
+	--name brivo-api-secret \
+	--secret-string file://secrets/brivo_api_secret.json

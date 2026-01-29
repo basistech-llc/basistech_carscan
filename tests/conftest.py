@@ -1,13 +1,198 @@
 """Pytest configuration and fixtures for CarScan tests."""
 
+import io
+import json
 import os
 import secrets as std_secrets
 import socket
 import threading
 import time
+import urllib.request
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 
+# -----------------------------------------------------------------------------
+# Mock OIDC IdP (no socket bind): patches requests.get/post so OIDC tests run
+# without starting a real server. Use fixture mock_oidc_idp in OIDC tests.
+# -----------------------------------------------------------------------------
+
+# Fake base URL for discovery/token/jwks (no server actually running)
+MOCK_OIDC_BASE = "https://fake-idp.test/oidc"
+
+
+class _MockResponse:
+    """Minimal response object for requests mock (status_code, headers, .json(), .text, .raise_for_status())."""
+
+    def __init__(self, status_code: int, body, headers=None):
+        self.status_code = status_code
+        self.headers = dict(headers or {})
+        if isinstance(body, dict):
+            self._body = json.dumps(body)
+            self.headers.setdefault("Content-Type", "application/json")
+        else:
+            self._body = str(body)
+
+    @property
+    def text(self):
+        return self._body
+
+    def json(self):
+        return json.loads(self._body)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}: {self.text}")
+
+
+@pytest.fixture
+def mock_oidc_idp(monkeypatch):
+    """
+    Mock OIDC IdP by patching requests.get and requests.post. No server or socket bind.
+
+    Yields dict with "discovery" URL. Use this fixture in OIDC tests so they run
+    in environments that cannot bind ports (e.g. CI/sandbox).
+    """
+    # pylint: disable=import-outside-toplevel
+    import base64 as b64
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from itsdangerous import URLSafeTimedSerializer
+
+    try:
+        import jwt
+    except ImportError:
+        pytest.skip("PyJWT/cryptography required for OIDC tests")
+
+    issuer = MOCK_OIDC_BASE.rstrip("/")
+    discovery_url = f"{issuer}/.well-known/openid-configuration"
+    authorization_endpoint = f"{issuer}/authorize"
+    token_endpoint = f"{issuer}/token"
+    jwks_uri = f"{issuer}/jwks"
+
+    hmac_secret = "super-secret-hmac"
+    serializer = URLSafeTimedSerializer(secret_key=hmac_secret, salt="oidc-state-v1")
+    code_store = {}
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+    numbers = public_key.public_numbers()
+    n_b64 = b64.urlsafe_b64encode(
+        numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
+    ).rstrip(b"=").decode()
+    e_b64 = b64.urlsafe_b64encode(numbers.e.to_bytes(3, "big")).rstrip(b"=").decode()
+    jwks_keys = [
+        {"kty": "RSA", "kid": "fake-idp-1", "use": "sig", "alg": "RS256", "n": n_b64, "e": e_b64}
+    ]
+
+    def mock_get(url, timeout=None, **kwargs):  # pylint: disable=unused-argument
+        if url == discovery_url:
+            return _MockResponse(
+                200,
+                {
+                    "issuer": issuer,
+                    "authorization_endpoint": authorization_endpoint,
+                    "token_endpoint": token_endpoint,
+                    "jwks_uri": jwks_uri,
+                },
+            )
+        if url == jwks_uri:
+            return _MockResponse(200, {"keys": jwks_keys})
+        # Authorize: URL contains state and redirect_uri; return 302 with Location
+        parsed = urlparse(url)
+        qs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        state = qs.get("state")
+        redirect_uri = qs.get("redirect_uri")
+        if not state or not redirect_uri:
+            return _MockResponse(400, {"error": "missing state or redirect_uri"})
+        try:
+            payload = serializer.loads(state)
+        except Exception:  # pylint: disable=broad-except
+            return _MockResponse(400, {"error": "invalid state"})
+        code = std_secrets.token_urlsafe(32)
+        code_store[code] = {"nonce": payload["nonce"], "cv": payload["cv"], "state": state}
+        loc = f"{redirect_uri}?code={code}&state={state}"
+        return _MockResponse(302, "", headers={"Location": loc})
+
+    def mock_post(url, timeout=None, data=None, **kwargs):  # pylint: disable=unused-argument
+        if url != token_endpoint:
+            raise RuntimeError(f"Unexpected POST: {url}")
+        data = data or {}
+        code = data.get("code")
+        code_verifier = data.get("code_verifier")
+        if not code or not code_verifier:
+            return _MockResponse(400, {"error": "missing code/state/code_verifier"})
+        if code not in code_store:
+            return _MockResponse(400, {"error": "invalid code"})
+        stored = code_store.pop(code)
+        if stored["cv"] != code_verifier:
+            return _MockResponse(400, {"error": "invalid code_verifier"})
+        now = int(time.time())
+        id_token_payload = {
+            "iss": issuer,
+            "sub": "alice-id",
+            "aud": data.get("client_id", "client-123"),
+            "exp": now + 3600,
+            "iat": now,
+            "nonce": stored["nonce"],
+            "email": "alice@example.edu",
+            "email_verified": True,
+            "name": "Alice Example",
+        }
+        id_token = jwt.encode(
+            id_token_payload,
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "fake-idp-1"},
+        )
+        if hasattr(id_token, "decode"):
+            id_token = id_token.decode("utf-8")
+        return _MockResponse(
+            200,
+            {
+                "access_token": "fake-access-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "id_token": id_token,
+            },
+        )
+
+    monkeypatch.setattr("requests.get", mock_get)
+    monkeypatch.setattr("requests.post", mock_post)
+    # app.oidc uses requests; ensure the module sees the patched requests
+    monkeypatch.setattr("app.oidc.requests.get", mock_get)
+    monkeypatch.setattr("app.oidc.requests.post", mock_post)
+
+    # PyJWKClient uses urllib.request.urlopen for JWKS; patch so no real HTTP
+    original_urlopen = urllib.request.urlopen
+
+    def mock_urlopen(req, timeout=None, context=None):
+        url = getattr(req, "full_url", None) or (
+            getattr(req, "get_full_url", lambda: None)() if hasattr(req, "get_full_url") else None
+        )
+        if not url and isinstance(req, str):
+            url = req
+        if url == jwks_uri:
+            body = json.dumps({"keys": jwks_keys}).encode()
+
+            class _MockJWKSResponse(io.BytesIO):
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+
+            return _MockJWKSResponse(body)
+        return original_urlopen(req, timeout=timeout, context=context)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    yield {"discovery": discovery_url}
+
+    code_store.clear()
+
+
+# -----------------------------------------------------------------------------
+# Real Fake IdP server (requires socket bind; use mock_oidc_idp when binding is not allowed)
+# -----------------------------------------------------------------------------
 # Fake IdP: lazy imports inside _make_fake_idp_app so tests that don't use
 # fake_idp_server don't require flask/jwt/cryptography/itsdangerous.
 

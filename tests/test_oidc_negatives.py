@@ -14,8 +14,8 @@ def _build_cfg(discovery, *, client_id="client-123", redirect_uri="https://app.e
     return cfg
 
 
-def test_invalid_state_signature(fake_idp_server):
-    cfg = _build_cfg(fake_idp_server["discovery"])
+def test_invalid_state_signature(mock_oidc_idp):
+    cfg = _build_cfg(mock_oidc_idp["discovery"])
     auth_url, _ = oidc.build_oidc_authorization_url_stateless(openid_config=cfg)
     r = requests.get(auth_url, allow_redirects=False, timeout=10)
     qs = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(r.headers["Location"]).query))
@@ -33,8 +33,8 @@ def test_invalid_state_signature(fake_idp_server):
         )
     assert "Signature" in str(e.value)
 
-def test_expired_state(fake_idp_server):
-    cfg = _build_cfg(fake_idp_server["discovery"])
+def test_expired_state(mock_oidc_idp):
+    cfg = _build_cfg(mock_oidc_idp["discovery"])
     auth_url, _ = oidc.build_oidc_authorization_url_stateless(openid_config=cfg)
     r = requests.get(auth_url, allow_redirects=False, timeout=10)
     qs = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(r.headers["Location"]).query))
@@ -49,9 +49,9 @@ def test_expired_state(fake_idp_server):
         )
     assert "age" in str(e.value).lower()
 
-def test_pkce_mismatch_with_swapped_state(fake_idp_server):
+def test_pkce_mismatch_with_swapped_state(mock_oidc_idp):
     # Issue two separate auth requests; use code from #1 with state from #2 → PKCE fail
-    cfg = _build_cfg(fake_idp_server["discovery"])
+    cfg = _build_cfg(mock_oidc_idp["discovery"])
     a1, _ = oidc.build_oidc_authorization_url_stateless(openid_config=cfg)
     a2, _ = oidc.build_oidc_authorization_url_stateless(openid_config=cfg)
 
