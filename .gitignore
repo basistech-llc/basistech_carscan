@@ -10,3 +10,4 @@ var/
 node_modules/
 dynamodb-local-metadata.json
 .aws-sam
+src/requirements.txt

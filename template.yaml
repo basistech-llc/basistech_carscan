@@ -11,8 +11,8 @@ Globals:
       Variables:
         LOG_LEVEL: !Ref LogLevel
         DEPLOYMENT_TIMESTAMP: !Ref DeploymentTimestamp
-        TABLE_NAME: !Ref MyTable
-        BUCKET_NAME: !Ref UploadBucket
+#        TABLE_NAME: !Ref MyTable
+#        BUCKET_NAME: !Ref UploadBucket
         GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArn
         BRIVO_SECRET_ARN: !Ref BrivoApiKeyArn
 
@@ -22,7 +22,7 @@ Parameters:
     Default: stage
     AllowedValues: [prod, stage]
     Description: The deployment environment (e.g., prod, stage, dev).
-  
+
   CustomDomainName:
     Type: String
     Description: "The full domain name (e.g., v2.cybersecurity-policy.org)"
@@ -59,34 +59,6 @@ Conditions:
   CreateAcmCert: !Equals [!Ref CertificateArn, ""]
 
 Resources:
-  # --- Storage ---
-  UploadBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      NotificationConfiguration:
-        EventBridgeConfiguration:
-          EventBridgeEnabled: true
-
-  MyTable:
-    Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      TableName: !Sub "cala-garage-scans-${StageName}" # Added suffix to avoid collisions
-      AttributeDefinitions:
-        - AttributeName: user_email
-          AttributeType: S
-        - AttributeName: sk
-          AttributeType: S
-      KeySchema:
-        - AttributeName: user_email
-          KeyType: HASH
-        - AttributeName: sk
-          KeyType: RANGE
-      BillingMode: PAY_PER_REQUEST
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-
   # --- Infrastructure / Networking ---
   HomeCertificate:
     Type: AWS::CertificateManager::Certificate
@@ -98,6 +70,34 @@ Resources:
         - DomainName: !Ref CustomDomainName
           HostedZoneId: !Ref HostedZoneId
 
+#  # --- Storage ---
+#  UploadBucket:
+#    Type: AWS::S3::Bucket
+#    Properties:
+#      NotificationConfiguration:
+#        EventBridgeConfiguration:
+#          EventBridgeEnabled: true
+#
+#  MyTable:
+#    Type: AWS::DynamoDB::Table
+#    DeletionPolicy: Retain
+#    UpdateReplacePolicy: Retain
+#    Properties:
+#      TableName: !Sub "cala-garage-scans-${StageName}" # Added suffix to avoid collisions
+#      AttributeDefinitions:
+#        - AttributeName: user_email
+#          AttributeType: S
+#        - AttributeName: sk
+#          AttributeType: S
+#      KeySchema:
+#        - AttributeName: user_email
+#          KeyType: HASH
+#        - AttributeName: sk
+#          KeyType: RANGE
+#      BillingMode: PAY_PER_REQUEST
+#      PointInTimeRecoverySpecification:
+#        PointInTimeRecoveryEnabled: true
+
   MyHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -106,14 +106,16 @@ Resources:
         AllowMethods: ['GET','POST','OPTIONS']
       Domain:
         DomainName: !Ref CustomDomainName
-        # Use the auto-created cert OR the one provided in parameters
         CertificateArn: !If [CreateAcmCert, !Ref HomeCertificate, !Ref CertificateArn]
         Route53:
           HostedZoneId: !Ref HostedZoneId
 
-  # --- Compute ---
   MyWebFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: python3.13
+      BuildProperties:
+        RequirementsFile: requirements.txt   # relative to CodeUri (src/)
     Properties:
       Description: !Sub "API Gateway for ${StageName} environment"
       Runtime: python3.13
@@ -121,11 +123,11 @@ Resources:
       Handler: app.main.lambda_handler
       Timeout: 60
       MemorySize: 512
-      Policies:
-        - S3CrudPolicy:
-            BucketName: !Ref UploadBucket
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MyTable
+#      Policies:
+#        - S3CrudPolicy:
+#            BucketName: !Ref UploadBucket
+#        - DynamoDBCrudPolicy:
+#            TableName: !Ref MyTable
       Events:
         ApiEvent:
           Type: HttpApi
@@ -133,28 +135,28 @@ Resources:
             ApiId: !Ref MyHttpApi
             Path: /{proxy+}
             Method: ANY
-        S3UploadEvent:
-          Type: EventBridgeRule
-          Properties:
-            Pattern:
-              source: [ "aws.s3" ]
-              detail-type: [ "Object Created" ]
-              detail:
-                bucket:
-                  name: [ !Ref UploadBucket ]
-                object:
-                  key: [ { "prefix": "uploads/" } ]
-        HeartbeatEvent:
-          Type: Schedule
-          Properties:
-            Schedule: rate(5 minutes)
-            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
+#        S3UploadEvent:
+#          Type: EventBridgeRule
+#          Properties:
+#            Pattern:
+#              source: [ "aws.s3" ]
+#              detail-type: [ "Object Created" ]
+#              detail:
+#                bucket:
+#                  name: [ !Ref UploadBucket ]
+#                object:
+#                  key: [ { "prefix": "uploads/" } ]
+#        HeartbeatEvent:
+#          Type: Schedule
+#          Properties:
+#            Schedule: rate(5 minutes)
+#            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
 
 Outputs:
   ApiEndpoint:
     Description: "The custom domain URL for your API"
     Value: !Sub "https://${CustomDomainName}/"
-  
+
   StackRegion:
     Description: "Region this stack is deployed to"
     Value: !Ref "AWS::Region"

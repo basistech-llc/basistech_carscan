@@ -338,7 +338,7 @@ make-local-bucket:
 ### build and deploy
 build:
 	poetry run pylint src/
-	poetry export -f requirements.txt --output src/app/requirements.txt --without-hashes
+	poetry export -f requirements.txt --output src/requirements.txt --without-hashes
 	sam build
 
 deploy: build
