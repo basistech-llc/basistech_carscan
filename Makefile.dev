@@ -80,6 +80,11 @@ distclean:
 
 install: $(PYR)
 
+## Lock and install all dependencies (including OIDC: requests, PyJWT, itsdangerous, cryptography). Run after adding deps.
+install-deps:
+	poetry lock
+	poetry install --with dev
+
 $(PYR):
 	poetry install
 
