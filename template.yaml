@@ -11,8 +11,8 @@ Globals:
       Variables:
         LOG_LEVEL: !Ref LogLevel
         DEPLOYMENT_TIMESTAMP: !Ref DeploymentTimestamp
-#        TABLE_NAME: !Ref MyTable
-#        BUCKET_NAME: !Ref UploadBucket
+        TABLE_NAME: !Ref MyTable
+        BUCKET_NAME: !Ref UploadBucket
         GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArn
         BRIVO_SECRET_ARN: !Ref BrivoApiKeyArn
 
@@ -70,33 +70,33 @@ Resources:
         - DomainName: !Ref CustomDomainName
           HostedZoneId: !Ref HostedZoneId
 
-#  # --- Storage ---
-#  UploadBucket:
-#    Type: AWS::S3::Bucket
-#    Properties:
-#      NotificationConfiguration:
-#        EventBridgeConfiguration:
-#          EventBridgeEnabled: true
-#
-#  MyTable:
-#    Type: AWS::DynamoDB::Table
-#    DeletionPolicy: Retain
-#    UpdateReplacePolicy: Retain
-#    Properties:
-#      TableName: !Sub "cala-garage-scans-${StageName}" # Added suffix to avoid collisions
-#      AttributeDefinitions:
-#        - AttributeName: user_email
-#          AttributeType: S
-#        - AttributeName: sk
-#          AttributeType: S
-#      KeySchema:
-#        - AttributeName: user_email
-#          KeyType: HASH
-#        - AttributeName: sk
-#          KeyType: RANGE
-#      BillingMode: PAY_PER_REQUEST
-#      PointInTimeRecoverySpecification:
-#        PointInTimeRecoveryEnabled: true
+  # --- Storage ---
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  MyTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "cala-garage-scans-${StageName}" # Added suffix to avoid collisions
+      AttributeDefinitions:
+        - AttributeName: user_email
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_email
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
   MyHttpApi:
     Type: AWS::Serverless::HttpApi
@@ -123,11 +123,16 @@ Resources:
       Handler: app.main.lambda_handler
       Timeout: 60
       MemorySize: 512
-#      Policies:
-#        - S3CrudPolicy:
-#            BucketName: !Ref UploadBucket
-#        - DynamoDBCrudPolicy:
-#            TableName: !Ref MyTable
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref UploadBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MyTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GoogleClientSecretArn
       Events:
         ApiEvent:
           Type: HttpApi
@@ -135,22 +140,22 @@ Resources:
             ApiId: !Ref MyHttpApi
             Path: /{proxy+}
             Method: ANY
-#        S3UploadEvent:
-#          Type: EventBridgeRule
-#          Properties:
-#            Pattern:
-#              source: [ "aws.s3" ]
-#              detail-type: [ "Object Created" ]
-#              detail:
-#                bucket:
-#                  name: [ !Ref UploadBucket ]
-#                object:
-#                  key: [ { "prefix": "uploads/" } ]
-#        HeartbeatEvent:
-#          Type: Schedule
-#          Properties:
-#            Schedule: rate(5 minutes)
-#            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
+        S3UploadEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: [ "aws.s3" ]
+              detail-type: [ "Object Created" ]
+              detail:
+                bucket:
+                  name: [ !Ref UploadBucket ]
+                object:
+                  key: [ { "prefix": "uploads/" } ]
+        HeartbeatEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
 
 Outputs:
   ApiEndpoint:

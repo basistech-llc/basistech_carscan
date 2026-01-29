@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  License Plate Scanner (BasisTech/Brivo)
+  Google OAuth, Server-side LPR, Secrets Manager
+
+Parameters:
+  StageName:
+    Type: String
+    Default: Staging
+  GoogleClientId:
+    Type: String
+    NoEcho: true
+    Description: "Google OAuth Client ID"
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+    Description: "Google OAuth Client Secret"
+  BrivoApiKey:
+    Type: String
+    NoEcho: true
+    Description: "Brivo API Key"
+
+Resources:
+  # --- Secrets Manager Resources ---
+  GoogleOAuthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "basistech/google-oauth-${StageName}"
+      Description: "Google OAuth Credentials for LPR App"
+      SecretString: !Sub '{"client_id": "${GoogleClientId}", "client_secret": "${GoogleClientSecret}"}'
+
+  BrivoAppSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "basistech/brivo-api-${StageName}"
+      Description: "Brivo API Key for LPR App"
+      SecretString: !Sub '{"api_key": "${BrivoApiKey}"}'
+
+  # --- S3 Bucket ---
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: AutoDeleteAfterOneYear
+            Status: Enabled
+            ExpirationInDays: 365
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ['*']
+
+  # --- DynamoDB ---
+  HistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: user_email
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_email
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+  # --- Lambda Function ---
+  AppFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Timeout: 20
+      MemorySize: 256
+      Runtime: python3.9
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref UploadBucket
+          TABLE_NAME: !Ref HistoryTable
+          GOOGLE_SECRET_ARN: !Ref GoogleOAuthSecret
+          BRIVO_SECRET_ARN: !Ref BrivoAppSecret
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref UploadBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref HistoryTable
+        - RekognitionDetectOnlyPolicy: {}
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Ref GoogleOAuthSecret
+                - !Ref BrivoAppSecret
+      Events:
+        # (Events same as before)
+        Root:
+          Type: Api
+          Properties:
+            Path: /
+            Method: get
+        StaticAssets:
+          Type: Api
+          Properties:
+            Path: /static/{proxy+}
+            Method: get
+        AuthLogin:
+          Type: Api
+          Properties:
+            Path: /auth/login
+            Method: get
+        AuthCallback:
+          Type: Api
+          Properties:
+            Path: /auth/callback
+            Method: get
+        ApiAny:
+          Type: Api
+          Properties:
+            Path: /api/{proxy+}
+            Method: any
+
+Outputs:
+  ApiURL:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/"

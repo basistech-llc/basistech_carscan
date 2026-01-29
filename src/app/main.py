@@ -11,37 +11,38 @@ from aws_lambda_powertools.event_handler import (
 )
 
 from .carscan import router as carscan_router, handle_s3_event
+from . import oidc as oidc_module
 
 # Logger automatically picks up LOG_LEVEL from template.yaml globals
 logger = Logger(service="CarScanMain")
 app = APIGatewayHttpResolver()
 
 
+def _get_email_from_cookie(headers: Dict[str, str]) -> str | None:
+    """Extract user email from user_session cookie, or return None."""
+    cookie = (headers.get("Cookie") or headers.get("cookie") or "").strip()
+    if "user_session=" not in cookie:
+        return None
+    try:
+        return cookie.split("user_session=")[1].split(";")[0].strip()
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
 def check_auth(
     app_instance: APIGatewayHttpResolver, next_middleware: Callable
 ) -> Response:
-    """Verify user_session cookie and inject email into the Powertools context."""
-    headers = app_instance.current_event.headers
-    cookie = headers.get("Cookie", "") or headers.get("cookie", "")
-
-    if "user_session=" not in cookie:
+    """Verify user_session cookie (set after OIDC login) and inject email into context."""
+    email = _get_email_from_cookie(app_instance.current_event.headers)
+    if not email:
         return Response(
             status_code=401,
             content_type=content_types.APPLICATION_JSON,
             body='{"error":"Unauthorized"}',
         )
-
-    try:
-        email = cookie.split("user_session=")[1].split(";")[0]
-        # When middleware is applied to a router, app_instance is the router
-        # Set context on the router so router.context.get() can access it
-        app_instance.append_context(user_email=email)
-        # Also set it directly on router.context dict to ensure it's accessible
-        if hasattr(app_instance, 'context') and isinstance(app_instance.context, dict):
-            app_instance.context['user_email'] = email
-    except Exception:  # pylint: disable=broad-except
-        return Response(status_code=401, body="Invalid Session")
-
+    app_instance.append_context(user_email=email)
+    if hasattr(app_instance, "context") and isinstance(app_instance.context, dict):
+        app_instance.context["user_email"] = email
     return next_middleware(app_instance)
 
 
@@ -51,11 +52,68 @@ carscan_router.use(middlewares=[check_auth])
 app.include_router(carscan_router, prefix="/api")
 
 
+@app.get("/auth/login")
+def auth_login() -> Response:
+    """Redirect to Google OIDC authorization URL."""
+    try:
+        config = oidc_module.get_oidc_config()
+        auth_url, _ = oidc_module.build_oidc_authorization_url_stateless(openid_config=config)
+        return Response(
+            status_code=302,
+            headers={"Location": auth_url},
+            body="",
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("OIDC login failed")
+        return Response(
+            status_code=503,
+            content_type=content_types.APPLICATION_JSON,
+            body='{"error":"Login temporarily unavailable"}',
+        )
+
+
+@app.get("/auth/callback")
+def auth_callback() -> Response:
+    """Handle OIDC redirect: exchange code for tokens, set session cookie, redirect to /."""
+    params = app.current_event.query_string_parameters or {}
+    # API Gateway may send multi-value params as lists; use first value
+    callback_params = {}
+    for k, v in params.items():
+        callback_params[k] = v[0] if isinstance(v, list) else v
+    try:
+        config = oidc_module.get_oidc_config()
+        result = oidc_module.handle_oidc_redirect_stateless(
+            openid_config=config,
+            callback_params=callback_params,
+        )
+        email = (result.get("claims") or {}).get("email")
+        if not email:
+            return Response(status_code=400, body="Missing email in IdP response")
+        # Set cookie and redirect to app root
+        cookie_value = f"user_session={email}; Path=/; HttpOnly; SameSite=Lax"
+        return Response(
+            status_code=302,
+            headers={"Location": "/", "Set-Cookie": cookie_value},
+            body="",
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("OIDC callback failed")
+        return Response(
+            status_code=400,
+            content_type=content_types.APPLICATION_JSON,
+            body='{"error":"Login failed"}',
+        )
+
+
 @app.get("/")
 def serve_index() -> Response:
-    """Serve the main camera interface HTML page."""
+    """Serve landing page if unauthenticated, otherwise the camera app."""
+    if _get_email_from_cookie(app.current_event.headers):
+        template_name = "camera.html"
+    else:
+        template_name = "landing.html"
     try:
-        template_path = Path(__file__).parent / "templates" / "camera.html"
+        template_path = Path(__file__).parent / "templates" / template_name
         with template_path.open("r", encoding="utf-8") as f:
             return Response(
                 status_code=200,
@@ -63,8 +121,8 @@ def serve_index() -> Response:
                 body=f.read(),
             )
     except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Failed to load index: %s", exc)
-        return Response(status_code=404, body="Index Not Found")
+        logger.error("Failed to load template %s: %s", template_name, exc)
+        return Response(status_code=404, body="Not Found")
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Any:

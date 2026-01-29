@@ -57,3 +57,9 @@ local-s3-event:
 	@rm temp_event.json
 
 ################################################################
+
+### startup
+upload-google-oidc-secret:
+	aws secretsmanager create-secret \
+	--name google-oidc-secret \
+	--secret-string file://secrets/google_oidc_secret.json

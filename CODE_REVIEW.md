@@ -85,27 +85,17 @@ from main import lambda_handler  # Should be from app.main
 
 ## High Priority Issues
 
-### 7. Insecure Authentication
-**File**: `src/app/main.py:11-30`
+### 7. Authentication (Addressed)
+**File**: `src/app/main.py`, `src/app/oidc.py`
 
-**Issues**:
-- Cookie parsing is naive and vulnerable to injection
-- No session validation or expiration
-- Email extracted directly from cookie without validation
-- No CSRF protection
+**Status**: Google OIDC is implemented. Users sign in via `/auth/login` (redirect to Google), then `/auth/callback` exchanges the code and sets a `user_session` cookie. Middleware validates the cookie for `/api/*` routes. Landing page (`landing.html`) is shown when unauthenticated.
 
-**Security Risk**: High - users can spoof email addresses
+**Remaining**: Cookie has no explicit expiration; consider Max-Age and secure flags for production.
 
-**Recommendation**: Implement proper session management or Google OAuth
+### 8. Google OIDC Implementation (Addressed)
+**Files**: `src/app/main.py`, `src/app/oidc.py`, `template.yaml`
 
-### 8. Missing Google OAuth Implementation
-**Files**: `template.yaml`, `template-gemini.yaml`
-
-**Issue**: Templates reference Google OAuth secrets and routes (`/auth/login`, `/auth/callback`), but no implementation exists
-
-**Impact**: Authentication flow is incomplete
-
-**Recommendation**: Implement OAuth flow or remove references
+**Status**: Implemented. Config is read from AWS Secrets Manager (`GOOGLE_SECRET_ARN`). Routes `/auth/login` and `/auth/callback` perform OIDC flow with PKCE and signed state.
 
 ### 9. Hardcoded Test Logic
 **File**: `src/app/carscan.py:88`
@@ -329,7 +319,7 @@ TableName: cala-garage-scans
 6. Add missing boto3 to requirements.txt
 
 ### Security Enhancements
-1. Implement proper authentication (OAuth or session tokens)
+1. ~~Implement proper authentication~~ (Google OIDC implemented)
 2. Add input validation and sanitization
 3. Restrict CORS origins
 4. Add rate limiting
@@ -375,6 +365,4 @@ TableName: cala-garage-scans
 
 ## Conclusion
 
-While the codebase demonstrates a working architecture and uses appropriate AWS services, it requires significant work before it can be considered production-ready. The most critical issues are import errors and missing resources that will prevent deployment. Security concerns, particularly around authentication, must be addressed before handling real user data.
-
-The code structure is reasonable, but consistency, error handling, and testing need substantial improvement. With the fixes outlined above, this could become a solid production application.
+The codebase has been updated with Google OIDC authentication, a landing page for unauthenticated users, and OIDC tests using a fake IdP fixture. Critical import and path issues have been addressed in prior work. Remaining improvements include session expiration, input validation, CORS tightening, and broader test coverage. Local MinIO and DynamoDB are used in tests and are not mocked.
