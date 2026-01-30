@@ -13,19 +13,17 @@ Globals:
         DEPLOYMENT_TIMESTAMP: !Ref DeploymentTimestamp
         GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArn
         BRIVO_SECRET_ARN: !Ref BrivoApiKeyArn
+        BUCKET_NAME: !Ref ImageBucketName
         #TABLE_NAME: !Ref MyTable
-        #BUCKET_NAME: !Ref UploadBucket
 
 Parameters:
-  StageName:
-    Type: String
-    Default: stage
-    AllowedValues: [prod, stage]
-    Description: The deployment environment (e.g., prod, stage, dev).
-
   CustomDomainName:
     Type: String
     Description: "The full domain name (e.g., v2.cybersecurity-policy.org)"
+
+  ImageBucketName:
+    Type: String
+    Description: "S3 name of image bucket (e.g. basistech-license-images)"
 
   HostedZoneId:
     Type: String
@@ -41,11 +39,6 @@ Parameters:
     Default: INFO
     AllowedValues: [CRITICAL, ERROR, WARNING, INFO, DEBUG, NOTSET]
 
-  DeploymentTimestamp:
-    Type: String
-    Default: 'Not Set'
-    Description: "Deployment UTC timestamp."
-
   GoogleClientSecretArn:
     Type: String
     Description: "ARN of the Google OAuth Secret in Secrets Manager"
@@ -53,6 +46,11 @@ Parameters:
   BrivoApiKeyArn:
     Type: String
     Description: "ARN of the Brivo API Key in Secrets Manager"
+
+  DeploymentTimestamp:
+    Type: String
+    Default: 'Not Set'
+    Description: "Deployment UTC timestamp."
 
 Conditions:
   # Logic: If CertificateArn is empty, we create a new one
@@ -69,14 +67,6 @@ Resources:
       DomainValidationOptions:
         - DomainName: !Ref CustomDomainName
           HostedZoneId: !Ref HostedZoneId
-
-  # --- Storage ---
-#  UploadBucket:
-#    Type: AWS::S3::Bucket
-#    Properties:
-#      NotificationConfiguration:
-#        EventBridgeConfiguration:
-#          EventBridgeEnabled: true
 
 #  MyTable:
 #    Type: AWS::DynamoDB::Table
@@ -117,22 +107,27 @@ Resources:
       BuildProperties:
         RequirementsFile: requirements.txt   # relative to CodeUri (src/)
     Properties:
-      Description: !Sub "API Gateway for ${StageName} environment"
+      Description: !Sub "API Gateway environment"
       Runtime: python3.13
       CodeUri: src/
       Handler: app.main.lambda_handler
       Timeout: 60
       MemorySize: 512
       Policies:
-      #  - S3CrudPolicy:
-      #      BucketName: !Ref UploadBucket
-      #  - DynamoDBCrudPolicy:
-      #      TableName: !Ref MyTable
+        #- DynamoDBCrudPolicy:
+        #    TableName: !Ref MyTable
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Ref GoogleClientSecretArn
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:${AWS::Partition}:s3:::${ImageBucketName}"
+                - !Sub "arn:${AWS::Partition}:s3:::${ImageBucketName}/*"
       Events:
         ApiEvent:
           Type: HttpApi
@@ -145,17 +140,17 @@ Resources:
           Properties:
             Schedule: rate(5 minutes)
             Input: '{"source": "aws.events", "detail-type": "Scheduled Event"}'
-#        S3UploadEvent:
-#          Type: EventBridgeRule
-#          Properties:
-#            Pattern:
-#              source: [ "aws.s3" ]
-#              detail-type: [ "Object Created" ]
-#              detail:
-#                bucket:
-#                  name: [ !Ref UploadBucket ]
-#                object:
-#                  key: [ { "prefix": "uploads/" } ]
+        S3UploadEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: [ "aws.s3" ]
+              detail-type: [ "Object Created" ]
+              detail:
+                bucket:
+                  name: [ !Ref ImageBucketName ]
+                object:
+                  key: [ { "prefix": "uploads/" } ]
 
 Outputs:
   ApiEndpoint:

@@ -1,14 +1,14 @@
 version = 0.1
 
 [default.deploy.parameters]
-stack_name = "carscan1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+image_repositories = []
+parameter_overrides = "CustomDomainName=\"carscan.nitroba.com\" ImageBucketName=\"basistech-carscan-test\" HostedZoneId=\"Z05629322DW2WL7JUPCBJ\" CertificateArn=\"\" LogLevel=\"DEBUG\" GoogleClientSecretArn=\"arn:aws:secretsmanager:us-east-1:376778049323:secret:google_oidc_secret-QOTz2n\" BrivoApiKeyArn=\"arn:aws:secretsmanager:us-east-1:376778049323:secret:brivo_api_secret-XfZDD4\" DeploymentTimestamp=\"2026-01-28\""
+profile = "simsong"
 resolve_s3 = true
 s3_prefix = "carscan1"
-capabilities = "CAPABILITY_IAM"
-parameter_overrides = "StageName=\"stage\" CustomDomainName=\"carscan.nitroba.com\" HostedZoneId=\"Z05629322DW2WL7JUPCBJ\" CertificateArn=\"\" LogLevel=\"DEBUG\" DeploymentTimestamp=\"2026-01-28\" GoogleClientSecretArn=\"arn:aws:secretsmanager:us-east-1:376778049323:secret:google_oidc_secret-QOTz2n\" BrivoApiKeyArn=\"arn:aws:secretsmanager:us-east-1:376778049323:secret:brivo_api_secret-XfZDD4\""
-image_repositories = []
-confirm_changeset = true
-profile = "simsong"
+stack_name = "carscan1"
 
 [default.global.parameters]
 region = "us-east-1"
