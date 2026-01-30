@@ -15,23 +15,60 @@ logger = Logger(child=True)
 router = Router()  # pylint: disable=not-callable
 
 # Initialize AWS clients
-# Use local endpoints if AWS_REGION is "local"
-_aws_region = os.environ.get("AWS_REGION", "")
-_use_local = _aws_region == "local"
-
-_s3_config = {}
-_dynamodb_config = {}
-if _use_local:
-    _s3_endpoint = os.environ.get("AWS_ENDPOINT_URL_S3", "http://localhost:9100/")
-    _dynamodb_endpoint = os.environ.get("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8010/")
-    if _s3_endpoint:
-        _s3_config["endpoint_url"] = _s3_endpoint
-    if _dynamodb_endpoint:
-        _dynamodb_config["endpoint_url"] = _dynamodb_endpoint
-
-s3_client = boto3.client("s3", **_s3_config)
+# S3 and DynamoDB are lazy so tests can set AWS_REGION=local in fixtures before first use.
 rekognition = boto3.client("rekognition")
-dynamodb = boto3.resource("dynamodb", **_dynamodb_config)
+
+
+def _s3_config():
+    """Build S3 client config from current env (lazy for tests)."""
+    cfg = {}
+    if os.environ.get("AWS_REGION") == "local":
+        endpoint = os.environ.get("AWS_ENDPOINT_URL_S3", "http://localhost:9100/")
+        if endpoint:
+            cfg["endpoint_url"] = endpoint
+    return cfg
+
+
+def _dynamodb_config():
+    """Build DynamoDB resource config from current env (lazy for tests)."""
+    cfg = {}
+    if os.environ.get("AWS_REGION") == "local":
+        endpoint = os.environ.get("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8010/")
+        if endpoint:
+            cfg["endpoint_url"] = endpoint
+    return cfg
+
+
+class _LazyS3Client: # pylint: disable=too-few-public-methods
+    """Create S3 client on first use so env (e.g. AWS_REGION=local) is read after pytest fixtures."""
+
+    _client = None
+
+    def _get(self):
+        if self._client is None:
+            self._client = boto3.client("s3", **_s3_config())
+        return self._client
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+class _LazyDynamoDB: # pylint: disable=too-few-public-methods
+    """Create DynamoDB resource on first use so env is read after pytest fixtures."""
+
+    _resource = None
+
+    def _get(self):
+        if self._resource is None:
+            self._resource = boto3.resource("dynamodb", **_dynamodb_config())
+        return self._resource
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+s3_client = _LazyS3Client()
+dynamodb = _LazyDynamoDB()
 
 
 def _get_table():

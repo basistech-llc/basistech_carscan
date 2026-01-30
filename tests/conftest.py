@@ -1,4 +1,11 @@
-"""Pytest configuration and fixtures for CarScan tests."""
+"""Pytest configuration and fixtures for CarScan tests.
+
+test_async_s3_handler uses mocks (no MinIO/DynamoDB) when any of:
+  - Cursor is active (Cursor sets CURSOR_TRACE_ID or other CURSOR_* in env)
+  - CI=true (e.g. GitHub Actions)
+  - CARSCAN_MOCK_S3_TEST=1
+Otherwise it requires AWS_REGION=local and MinIO/DynamoDB Local, or skips.
+"""
 
 import io
 import json
@@ -10,6 +17,7 @@ import time
 import urllib.request
 from urllib.parse import parse_qsl, urlparse
 
+from itsdangerous import URLSafeTimedSerializer
 import pytest
 
 # -----------------------------------------------------------------------------
@@ -56,7 +64,6 @@ def mock_oidc_idp(monkeypatch):
     # pylint: disable=import-outside-toplevel
     import base64 as b64
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from itsdangerous import URLSafeTimedSerializer
 
     try:
         import jwt
@@ -207,7 +214,6 @@ def _make_fake_idp_app(hmac_secret: str, base_url: str):
     import jwt
     from cryptography.hazmat.primitives.asymmetric import rsa
     from flask import Flask, redirect, request
-    from itsdangerous import URLSafeTimedSerializer
 
     app = Flask(__name__)
     serializer = URLSafeTimedSerializer(secret_key=hmac_secret, salt="oidc-state-v1")
@@ -335,15 +341,26 @@ def set_test_env_vars(monkeypatch):
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
 
 
+# Must match main._COOKIE_SECRET so tests can send valid signed session cookies
+_TEST_COOKIE_SECRET = "hardcoded-secret-changeme"
+
+
+def _signed_user_session(email: str) -> str:
+    """Return a signed user_session cookie value (same secret/salt as main)."""
+    signer = URLSafeTimedSerializer(secret_key=_TEST_COOKIE_SECRET, salt="user_session")
+    return signer.dumps(email)
+
+
 @pytest.fixture
 def api_event():
-    """Generate a skeleton API Gateway HTTP API v2 event."""
+    """Generate a skeleton API Gateway HTTP API v2 event with valid signed session cookie."""
+    signed = _signed_user_session("test@example.com")
     return {
         "version": "2.0",
         "routeKey": "GET /api/history",
         "rawPath": "/api/history",
         "rawQueryString": "",
-        "headers": {"Cookie": "user_session=test@example.com"},
+        "headers": {"Cookie": f"user_session={signed}"},
         "requestContext": {
             "routeKey": "GET /api/history",
             "http": {

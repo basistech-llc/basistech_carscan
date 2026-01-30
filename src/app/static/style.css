@@ -1,3 +1,5 @@
+/* style.css */
+
 * { box-sizing: border-box; }
 body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: #f4f4f9; }
 .app-container { max-width: 600px; margin: 0 auto; background: #fff; min-height: 100vh; display: flex; flex-direction: column; }
@@ -64,3 +66,28 @@ input, select { padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-
     background: #f8f9fa;
     border-color: #dadce0;
 }
+
+/* Camera page: logged-in user footer */
+.user-footer {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 12px 15px;
+    background: #fff;
+    border-top: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+}
+.user-email { color: #555; }
+.btn-logout {
+    padding: 8px 16px;
+    background: #e2e6ea;
+    color: #333;
+    border: none;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 500;
+    cursor: pointer;
+}
+.btn-logout:hover { background: #d0d4d8; }
