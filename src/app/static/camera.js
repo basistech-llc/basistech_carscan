@@ -67,7 +67,7 @@ async function post_image(image) {
       console.log("formData:",formData);
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), UPLOAD_TIMEOUT_SECONDS * 1000);
-      fetch(obj.url, { method: 'POST', body: formData , signal: ctrl.signal});
+      fetch(obj.presigned.url, { method: 'POST', body: formData , signal: ctrl.signal});
       pollForResult(obj.job_id); // scan for results
     });
 }
