@@ -344,8 +344,9 @@ make-local-bucket:
 
 ################################################################
 ### build and deploy
+### cfn-lint makes an error if AWS_REGION is local...
 sam-lint:
-	poetry run cfn-lint template.yaml
+	AWS_REGION=us-east-1 poetry run cfn-lint template.yaml
 	sam validate --lint
 
 sam-build:
