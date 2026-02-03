@@ -1,3 +1,6 @@
+#
+# Create the CarScan Lambda which hosts the carscan application
+
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
@@ -104,8 +107,9 @@ Resources:
           Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource: !Ref GoogleClientSecretArn
-              Resource: !Ref BrivoApiKeyArn
+              Resource:
+                - !Ref GoogleClientSecretArn
+                - !Ref BrivoApiKeyArn
             - Effect: Allow
               Action:
                 - s3:PutObject

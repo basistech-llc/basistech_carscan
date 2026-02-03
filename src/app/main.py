@@ -18,7 +18,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .carscan import router as carscan_router, handle_s3_event
 from . import oidc as oidc_module
 
-__version__ = '0.9.0'
+__version__ = '0.9.1'
 
 logger = Logger(service="APP")
 # Respect LOG_LEVEL from env (e.g. DEBUG); do not override
@@ -127,7 +127,7 @@ def auth_login() -> Response:
         return Response(
             status_code=503,
             content_type=content_types.APPLICATION_JSON,
-            body='{"error":"Login temporarily unavailable"}',
+            body='{"error":"Login temporarily unavailable (OIDC login failed)"}',
         )
 
 @app.get("/auth/callback")
@@ -278,12 +278,6 @@ def get_dir_content(which, proxy: str):
     # Read as binary to let Powertools handle auto-Base64 encoding if needed
     with open(path, "rb") as f:
         return f.read(), mtype
-
-@app.get("/favicon.ico")
-def serve_favicon():
-    return Response( status_code=302,
-                     headers={"Location":"/static/favicon-32x32.png"})
-
 
 @app.get("/static/.+")
 def serve_static():

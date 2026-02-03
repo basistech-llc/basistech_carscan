@@ -12,4 +12,3 @@ dynamodb-local-metadata.json
 .aws-sam
 src/requirements.txt
 secrets/
-*secret*

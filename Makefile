@@ -39,10 +39,10 @@ local-s3-event:
 ### startup
 upload-google-oidc-secret:
 	aws secretsmanager create-secret \
-	--name google-oidc-secret \
+	--name google-oidc \
 	--secret-string file://secrets/google_oidc_secret.json
 
 upload-brivo-oidc-secret:
 	aws secretsmanager create-secret \
-	--name brivo-api-secret \
-	--secret-string file://secrets/brivo_api_secret.json
+	--name brivo \
+	--secret-string file://secrets/brivo_combined_secrets.json

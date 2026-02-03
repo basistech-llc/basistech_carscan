@@ -62,6 +62,7 @@ check:
 lint:
 	make pylint
 	make eslint
+	make sam-lint
 
 coverage:
 	make pytest-coverage
@@ -343,15 +344,19 @@ make-local-bucket:
 
 ################################################################
 ### build and deploy
-build:
-	poetry run pylint src/
+sam-lint:
+	poetry run cfn-lint template.yaml
+	sam validate --lint
+
+sam-build:
+	make lint
 	poetry export -f requirements.txt --output src/requirements.txt --without-hashes
 	sam build
 
-deploy: build
+sam-deploy: build
 	sam deploy
 
-deploy-guided: build
+sam-deploy-guided: build
 	sam deploy --guided
 
 list-domains:
