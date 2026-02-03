@@ -1,3 +1,4 @@
+import functools
 import requests
 import sys
 import json
@@ -23,10 +24,13 @@ _CF_ID_CACHE = {}
 
 SECRET_PATH = Path(__file__).parent.parent.parent / "secrets_brivo.json"
 
+@functools.cache_lru(max_size=1)
 def get_secrets():
     if SECRET_PATH.exists:
         with SECRET_PATH.open("r") as f:
             return json.load(f)
+
+def secret(v):
 
 
 def get_token():
