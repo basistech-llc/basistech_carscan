@@ -213,7 +213,7 @@ def main():
     args = parser.parse_args()
 
     if args.dump:
-        for u in get_all_users():
+        for u in get_all_users(expand=True):
             print(u['id'], u['firstName'], u['lastName'], find_plate(u))
     elif args.plate:
         users = search_users_by_plate_api(args.plate,operator=args.op)
