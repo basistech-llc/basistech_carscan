@@ -1,14 +1,14 @@
 version = 0.1
 
 [default.deploy.parameters]
-capabilities = "CAPABILITY_IAM"
-confirm_changeset = false
-image_repositories = []
-parameter_overrides = "CustomDomainName=\"carscan.nitroba.com\" ImageBucketName=\"basistech-carscan-test\" HostedZoneId=\"Z05629322DW2WL7JUPCBJ\" CertificateArn=\"\" LogLevel=\"DEBUG\" GoogleClientSecretArn=\"arn:aws:secretsmanager:us-east-1:376778049323:secret:google_oidc_secret-QOTz2n\" BrivoApiKeyArn=\"arn:aws:secretsmanager:us-east-1:376778049323:secret:brivo_api_secret-XfZDD4\" DeploymentTimestamp=\"2026-01-28\""
-profile = "simsong"
+profile = "basistech"
+stack_name = "carscan"
 resolve_s3 = true
-s3_prefix = "carscan1"
-stack_name = "carscan1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "CustomDomainName=\"carscan.basistech.io\" ImageBucketName=\"basistech-carscan-images\" HostedZoneId=\"Z1000045N2FKFAMSDT42\" CertificateArn=\"\" LogLevel=\"DEBUG\" GoogleClientSecretArn=\"arn:aws:secretsmanager:us-east-2:101576635312:secret:google_oidc-OEEw7o\" BrivoApiKeyArn=\"arn:aws:secretsmanager:us-east-2:101576635312:secret:brivo-3t7NoA\" BrivoScanTable=\"brivo-scan-table\" DeploymentTimestamp=\"2026-02-03\""
+image_repositories = []
+s3_prefix = "carscan"
+confirm_changeset = false
 
 [default.global.parameters]
-region = "us-east-1"
+region = "us-east-2"

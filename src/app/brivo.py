@@ -1,5 +1,4 @@
 import functools
-import requests
 import sys
 import json
 import base64
@@ -7,14 +6,16 @@ import urllib
 import urllib.parse
 from pathlib import Path
 import argparse
-
-#from secrets import API_KEY, CLIENT_PASSWORD_ID, CLIENT_PASSWORD_SECRET, ADMIN_ID, USER_PASSWORD
-
-import logging
 from typing import Final
+import logging
+import os
 
-SECRET_PATH = Path(__file__).parent.parent.parent / "secrets_brivo.json"
+import boto3
+import requests
 
+
+SECRET_PATH = Path(__file__).parent.parent.parent / "secrets" / "brivo_combined_secrets.json"
+DEFAULT_TIMEOUT = 5
 
 # basistech configuration
 
@@ -28,13 +29,22 @@ OPERATOR_EQ="eq"
 OPERATOR_CONTAINS="contains"
 OPERATOR_STARTS="startswith"
 
-LOGGER: Final = logging.getLogger(__name__)
+logger: Final = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=1)
 def get_secrets():
-    if SECRET_PATH.exists:
+    try:
         with SECRET_PATH.open("r") as f:
             return json.load(f)
+    except FileNotFoundError:
+        pass
+    secret_arn = os.environ.get("BRIVO_SECRET_ARN")
+    if not secret_arn:
+        raise RuntimeError("BRIVO_SECRET_ARN environment variable is not set")
+    client = boto3.client("secretsmanager")
+    response = client.get_secret_value(SecretId=secret_arn)
+    raw = json.loads(response["SecretString"])
+    return raw
 
 def secret(v):
     return get_secrets()[v]
@@ -56,7 +66,7 @@ def get_token():
     }
     params = {'grant_type': 'password', 'username': ADMIN_ID, 'password': USER_PASSWORD}
 
-    resp = requests.post(url, headers=headers, data=urllib.parse.urlencode(params))
+    resp = requests.post(url, headers=headers, data=urllib.parse.urlencode(params),timeout=DEFAULT_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -72,59 +82,57 @@ def authenticated_request(method, endpoint, params=None):
 
     try:
         if method.lower() == 'get':
-            print(url,params)
-            r = requests.get(url, headers=headers, params=params)
+            #print(url,params)
+            r = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
         else:
             raise ValueError(method)
 
         if r.status_code == 401:
-            print("--> [Auth] Token expired. Refreshing...", file=sys.stderr)
+            #print("--> [Auth] Token expired. Refreshing...", file=sys.stderr)
             headers['Authorization'] = f"bearer {ACCESS_TOKEN}"
-            print(url,params)
-            r = requests.get(url, headers=headers, params=params)
+            #print(url,params)
+            r = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
 
         r.raise_for_status()
         return r
 
-    except Exception as e:
+    except Exception as e:      # pylint: disable=broad-exception-caught
         print(f"!! API Error on {url}: {e}", file=sys.stderr)
         return None
 
 
 def get_user_detail(user_id):
+    """Get all of the data and turn the custom fields into top-level fields"""
+    if isinstance(user_id,dict):
+        user_id = user_id['id']
+
     r = authenticated_request('GET',f'/users/{user_id}',
                               params = {"expand": "customFields,emails,phoneNumbers,credentials"})
     r.raise_for_status()
-    return r.json()
+    val = r.json()
+    for fields in val.get('customFields',[]):
+        val[fields['fieldName']] = fields.get('value')
+    return val
 
 def get_all_users(pageSize=100,expand=False):
     """Generator to get all users"""
     offset = 0
     while True:
-        print("offset:",offset)
         r = authenticated_request('GET','/users', params = {
             "offset": offset,
             "pageSize": pageSize, })
 
         data = r.json()
         users = data.get("data", [])
-        print("len(users)=",len(users))
         if not users:
             return
 
         for u in users:
             if expand:
-                u = get_user_detail(u)
+                u = get_user_detail(u['id'])
             yield u
 
         offset += pageSize
-
-def find_plate(user):
-    for cf in user.get("customFields", []):
-        if cf.get("name") == PLATE_FIELD:
-            return cf.get("value")
-    return None
-
 
 def resolve_custom_field_id_by_name_via_public_api(field_name):
     """
@@ -154,6 +162,7 @@ def resolve_custom_field_id_by_name_via_public_api(field_name):
     raise ValueError(f"Could not find custom field id for {field_name!r} via /custom-fields")
 
 
+# pylint: disable=too-many-arguments
 def search_users_by_plate_api( plate, *,
                                plate_field_name=PLATE_FIELD,
                                custom_field_id=PLATE_CUSTOM_FIELD_ID,
@@ -187,20 +196,14 @@ def search_users_by_plate_api( plate, *,
     payload = r.json()
     return payload.get("data", [])
 
-def brivo_lookup(plate: str, state: str) -> str:
+def brivo_lookup(plate: str) -> str:
     """
-    Stub Brivo lookup.
-
-    Args:
-        plate: License plate text (already upper‑cased by caller).
-        state: Two‑letter state code.
-
-    Returns:
-        A display name string for the matched user, or ``\"Unknown\"``.
-        For now this is a pure stub and always returns ``\"Unknown\"``.
+    Looks up the user by plate. Returns the first match or None
     """
-    LOGGER.debug("Brivo lookup stub called for plate=%s state=%s", plate, state)
-    return "Unknown"
+    logger.debug("Brivo lookup stub called for plate=%s", plate)
+    for u in search_users_by_plate_api(plate):
+        return get_user_detail(u['id'])
+    return None
 
 
 def main():
@@ -214,16 +217,15 @@ def main():
 
     if args.dump:
         for u in get_all_users(expand=True):
-            print(u['id'], u['firstName'], u['lastName'], find_plate(u))
+            if u.get(PLATE_FIELD):
+                print(u['id'], u['firstName'], u['lastName'], u.get(PLATE_FIELD))
     elif args.plate:
-        users = search_users_by_plate_api(args.plate,operator=args.op)
-        for u in users:
-            print(u["id"], u["firstName"], u["lastName"], find_plate(u))
+        print(json.dumps(brivo_lookup(args.plate),indent=4,default=str))
     elif args.name:
         hits = search_users_by_plate_api(args.name,operator=OPERATOR_CONTAINS)   # server-side
         for u in hits:
-            print(u["id"], u.get("firstName"), u.get("lastName"), find_plate(u))
-        return
+            print(u["id"], u.get("firstName"), u.get("lastName"), u.get(PLATE_FIELD))
+
 
 if __name__=="__main__":
     main()

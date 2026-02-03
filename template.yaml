@@ -14,7 +14,7 @@ Globals:
         GOOGLE_SECRET_ARN: !Ref GoogleClientSecretArn
         BRIVO_SECRET_ARN: !Ref BrivoApiKeyArn
         BUCKET_NAME: !Ref ImageBucketName
-        #TABLE_NAME: !Ref MyTable
+        TABLE_NAME: !Ref BrivoScanTable
 
 Parameters:
   CustomDomainName:
@@ -47,6 +47,10 @@ Parameters:
     Type: String
     Description: "ARN of the Brivo API Key in Secrets Manager"
 
+  BrivoScanTable:
+    Type: String
+    Description: "Table name of table that holds log entries"
+
   DeploymentTimestamp:
     Type: String
     Default: 'Not Set'
@@ -67,26 +71,6 @@ Resources:
       DomainValidationOptions:
         - DomainName: !Ref CustomDomainName
           HostedZoneId: !Ref HostedZoneId
-
-#  MyTable:
-#    Type: AWS::DynamoDB::Table
-#    DeletionPolicy: Retain
-#    UpdateReplacePolicy: Retain
-#    Properties:
-#      TableName: !Sub "cala-garage-scans-${StageName}" # Added suffix to avoid collisions
-#      AttributeDefinitions:
-#        - AttributeName: user_email
-#          AttributeType: S
-#        - AttributeName: sk
-#          AttributeType: S
-#      KeySchema:
-#        - AttributeName: user_email
-#          KeyType: HASH
-#        - AttributeName: sk
-#          KeyType: RANGE
-#      BillingMode: PAY_PER_REQUEST
-#      PointInTimeRecoverySpecification:
-#        PointInTimeRecoveryEnabled: true
 
   MyHttpApi:
     Type: AWS::Serverless::HttpApi
@@ -114,13 +98,14 @@ Resources:
       Timeout: 60
       MemorySize: 512
       Policies:
-        #- DynamoDBCrudPolicy:
-        #    TableName: !Ref MyTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BrivoScanTable
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Ref GoogleClientSecretArn
+              Resource: !Ref BrivoApiKeyArn
             - Effect: Allow
               Action:
                 - s3:PutObject

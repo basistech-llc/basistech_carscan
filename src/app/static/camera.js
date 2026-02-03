@@ -94,15 +94,24 @@ async function manualSearch() {
   const res = await apiCall('api/manual', {
     method: 'POST',
     body: JSON.stringify({
-      plate: text,
-      state: stateSelect.value
+      plate: text
     })
   });
 
   if (res.ok) {
     const { data } = await res.json();
-    const found = data.result !== "Unknown";
-    showResult(data.result, `${data.plate} (${data.state})`, found);
+    console.log("data=",data);
+    var found = false;
+    var show  = "";
+    var show2 = "not found";
+    if (data.result){
+      show = data.result.firstName + " " + data.result.lastName;
+      if (data.result.phoneNumbers && data.result.phoneNumbers[0]) {
+        show2 += " " + data.result.phoneNumbers[0].number + " ";
+      }
+      show2 += data.result["Auto Registration - Plate Number"];
+    }
+    showResult(show, show2, found);
   } else {
     showResult("Error", "Could not save manual entry", false);
   }

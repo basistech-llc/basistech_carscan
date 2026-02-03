@@ -18,6 +18,8 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .carscan import router as carscan_router, handle_s3_event
 from . import oidc as oidc_module
 
+__version__ = '0.9.0'
+
 logger = Logger(service="APP")
 # Respect LOG_LEVEL from env (e.g. DEBUG); do not override
 _log_level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -204,6 +206,12 @@ def serve_index() -> Response:
         logger.error("Failed to load template %s: %s", template_name, exc)
         return Response(status_code=404, body="Not Found")
 
+@app.get("/version")
+def get_version():
+    return Response(status_code=200,
+                    content_type=content_types.APPLICATION_JSON,
+                    body={'version':__version__,
+                          'DEPLOYMENT_TIMESTAMP':os.environ.get('DEPLOYMENT_TIMESTAMP','n/a')})
 
 @app.get("/auth/logout")
 def auth_logout() -> Response:
@@ -270,6 +278,12 @@ def get_dir_content(which, proxy: str):
     # Read as binary to let Powertools handle auto-Base64 encoding if needed
     with open(path, "rb") as f:
         return f.read(), mtype
+
+@app.get("/favicon.ico")
+def serve_favicon():
+    return Response( status_code=302,
+                     headers={"Location":"/static/favicon-32x32.png"})
+
 
 @app.get("/static/.+")
 def serve_static():

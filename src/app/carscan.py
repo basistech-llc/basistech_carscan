@@ -76,7 +76,6 @@ def _get_table():
     table_name = os.environ.get("TABLE_NAME", "test-table")
     return dynamodb.Table(table_name)
 
-
 # Lazy table accessor - reads table name from environment each time it's accessed
 class _LazyTable:
     """Lazy table accessor that reads table name from environment each time."""
@@ -88,7 +87,6 @@ class _LazyTable:
     def __call__(self, *args, **kwargs):
         # Handle if table is called as a function (shouldn't happen, but be safe)
         return _get_table()(*args, **kwargs)
-
 
 table = _LazyTable()
 
@@ -171,24 +169,25 @@ def manual_entry() -> Dict[str, Any]:
     body = router.current_event.json_body
 
     plate = body.get("plate", "").upper()
-    state = body.get("state", "MA")
 
     # Generate a unique job_id for manual entries
     job_id = f"manual/{int(time.time())}"
 
     # Perform Brivo Lookup (currently stubbed)
-    result_name = brivo.brivo_lookup(plate, state)
+    u = brivo.brivo_lookup(plate)
 
     item = {
         "user_email": user,
         "sk": f"job#{job_id}",
         "plate": plate,
-        "state": state,
-        "result": result_name,
+        "result": u,
         "timestamp": int(time.time()),
         "image_key": "manual",
     }
-    _get_table().put_item(Item=item)
+    try:
+        _get_table().put_item(Item=item)
+    except Exception as e:         # pylint: disable=broad-exception-caught
+        logger.error("Exception: %s",e)
 
     return {"status": "complete", "data": item}
 
@@ -224,7 +223,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         )
 
         # 3. Lookup Brivo (currently stubbed)
-        result_name = brivo.brivo_lookup(plate, state)
+        result_name = brivo.brivo_lookup(plate)
 
         # 4. Save record for frontend polling and history
         _get_table().put_item(
@@ -242,4 +241,3 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
 
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Background processing failed for %s: %s", key, exc)
-
