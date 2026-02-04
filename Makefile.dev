@@ -23,11 +23,11 @@ ifeq ($(AWS_REGION),)
     export AWS_REGION                ?= local
 endif
 ifeq ($(AWS_REGION),local)
-    export AWS_ACCESS_KEY_ID         := minioadmin
-    export AWS_SECRET_ACCESS_KEY     := minioadmin
-    export AWS_ENDPOINT_URL_DYNAMODB := http://localhost:8010/
-    export AWS_ENDPOINT_URL_S3       := http://localhost:9100/
-    export TEST_BUCKET               := s3bucket
+    export AWS_ACCESS_KEY_ID         := test
+    export AWS_SECRET_ACCESS_KEY     := test
+    export AWS_ENDPOINT_URL_DYNAMODB := http://localhost:8000/
+    export AWS_ENDPOINT_URL_S3       := http://localhost:9000/
+    export TEST_BUCKET               := test-bucket
 endif
 
 PYR := .venv/pyvenv.cfg
@@ -35,7 +35,16 @@ DYR := bin/DynamoDBLocal.jar
 SYR := bin/minio
 TS_FILES := $(wildcard *.ts */*.ts)
 JS_FILES := $(TS_FILES:.ts=.js)
+
+# If we are running in GitHub, we have layers for minio and dynamodb
+# If we are running locally, we need to download them
+
 DYNAMODB_LOCAL_DOWNLOAD_URL:=https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_latest.zip
+MINIO_LINUX_BASE=https://dl.min.io/server/minio/release/linux-amd64
+MINIO_LINUX_BASE_MC=https://dl.min.io/client/mc/release/linux-amd64/
+MINIO_LINUX_ARM_BASE=https://dl.min.io/server/minio/release/linux-arm64
+MINIO_LINUX_ARM_BASE_MC=https://dl.min.io/client/mc/release/linux-arm64/
+MINIO_MACOS_BASE=https://dl.min.io/server/minio/release/darwin-arm64
 
 ################################################################
 # Main targets used by CI/CD system and developers
@@ -222,18 +231,7 @@ jstest-debug:
 # DynamoDBLocal
 # Installations are used by the CI pipeline and by local developers
 # See https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html for info about DynamoDB (local version)
-.PHONY: start_local_dynamodb stop_local_dynamodb list-tables ensure-local-services
-
-ensure-local-services:
-	@# Ensure DynamoDB Local is running and tables exist
-	@if [ "$(AWS_REGION)" = "local" ]; then \
-		echo "Ensuring local services are ready..."; \
-		make create-tables || true; \
-		make make-local-bucket; \
-		echo "Local services ready."; \
-	fi
-
-# installation:
+# installation and start/stop:
 bin/dynamodb_local_latest.zip:
 	mkdir -p bin
 	test -f bin/dynamodb_local_latest.zip || curl $(DYNAMODB_LOCAL_DOWNLOAD_URL) -o bin/dynamodb_local_latest.zip
@@ -249,6 +247,18 @@ start_local_dynamodb: bin/DynamoDBLocal.jar
 
 stop_local_dynamodb:  bin/DynamoDBLocal.jar
 	bash bin/local_dynamodb_control.bash stop
+.PHONY: start_local_dynamodb stop_local_dynamodb
+################################################################
+
+.PHONY: ensure-local-services create-tables delete-tables list-tables
+ensure-local-services:
+	@# Ensure DynamoDB Local is running and tables exist
+	@if [ "$(AWS_REGION)" = "local" ]; then \
+		echo "Ensuring local services are ready..."; \
+		make create-tables || true; \
+		make make-local-bucket; \
+		echo "Local services ready."; \
+	fi
 
 create-tables:
 ifeq ($(AWS_REGION),local)
@@ -286,25 +296,19 @@ list-tables:
 # Minio (S3 clone -- see: https://min.io/)
 # Installations are used by the CI pipeline and by local developers
 
-# Sources:
-LINUX_BASE=https://dl.min.io/server/minio/release/linux-amd64
-LINUX_BASE_MC=https://dl.min.io/client/mc/release/linux-amd64/
-LINUX_ARM_BASE=https://dl.min.io/server/minio/release/linux-arm64
-LINUX_ARM_BASE_MC=https://dl.min.io/client/mc/release/linux-arm64/
-MACOS_BASE=https://dl.min.io/server/minio/release/darwin-arm64
 bin/minio:
 	@echo downloading and installing minio
 	mkdir -p bin
 	uname -a
 	if [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "amd64" ] ; then \
-		echo Linux amd64 ; curl $(LINUX_BASE)/minio -o bin/minio ; curl $(LINUX_BASE_MC)/mc -o bin/mc ; \
+		echo Linux amd64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
 	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "x86_64" ] ; then \
-		echo Linux x86_64 ; curl $(LINUX_BASE)/minio -o bin/minio ; curl $(LINUX_BASE_MC)/mc -o bin/mc ; \
+		echo Linux x86_64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
 	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "aarch64" ] ; then \
-		echo Linux aarch64 ; curl $(LINUX_ARM_BASE)/minio -o bin/minio ; curl $(LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+		echo Linux aarch64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
 	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "arm64" ] ; then \
-		echo Linux arm64 ; curl $(LINUX_ARM_BASE)/minio -o bin/minio ; curl $(LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
+		echo Linux arm64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MINIO_MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
 	else \
 		echo unknown os/architecture; exit 1; \
 	fi
@@ -320,9 +324,10 @@ start_local_minio: bin/minio
 
 stop_local_minio:  bin/minio
 	bash bin/local_minio_control.bash stop
-
+.PHONY: start_local_minio stop_local_minio
+###############################################################
 list-local-buckets:
-	$(AWS_VARS) aws s3 ls
+	aws s3 ls
 
 make-local-bucket:
 	@BUCKET_NAME=$${BUCKET_NAME:-$(TEST_BUCKET)}; \
@@ -330,16 +335,17 @@ make-local-bucket:
 		echo "Warning: BUCKET_NAME not set, using default $(TEST_BUCKET)"; \
 		BUCKET_NAME=$(TEST_BUCKET); \
 	fi; \
-	if $(AWS_VARS) aws s3 ls s3://$$BUCKET_NAME/ >/dev/null 2>&1; then \
+	if aws s3 ls s3://$$BUCKET_NAME/ >/dev/null 2>&1; then \
 	 	echo "Bucket $$BUCKET_NAME exists"; \
 	else \
 		echo "Creating bucket s3://$$BUCKET_NAME/"; \
-		$(AWS_VARS) aws s3 mb s3://$$BUCKET_NAME/ 2>&1 || echo "Failed to create bucket $$BUCKET_NAME (may already exist)"; \
+		aws s3 mb s3://$$BUCKET_NAME/ 2>&1 || echo "Failed to create bucket $$BUCKET_NAME (may already exist)"; \
 	fi
 	@echo "Local buckets:"
-	@$(AWS_VARS) aws s3 ls 2>/dev/null || echo "Could not list buckets"
+	@aws s3 ls 2>/dev/null || echo "Could not list buckets"
 
-.PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
+.PHONY: list-local-buckets make-local-bucket
+
 
 ################################################################
 ### build and deploy

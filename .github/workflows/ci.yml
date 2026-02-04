@@ -9,6 +9,27 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: local
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+        options: >-
+          --health-cmd "curl -f http://localhost:8000 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      minio:
+        image: minio/minio
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
 
     steps:
     - uses: actions/checkout@v4
@@ -17,6 +38,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.13'
+        cache: 'poetry'
 
     - name: Install Poetry via pipx (official method)
       run: |
@@ -35,41 +57,11 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
+        cache: 'npm'
 
     - name: Install Dependencies
       run: npm ci
 
-    - name: Install Java (for DynamoDB Local)
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '21'
-
-    - name: Install AWS CLI
-      run: |
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install --update
-
-    - name: Install DynamoDB Local
-      run: make bin/DynamoDBLocal.jar
-
-    - name: Install MinIO
-      run: make bin/minio
-
-    - name: Start DynamoDB Local and MinIO
-      run: |
-        export AWS_REGION=local
-        make start_local_dynamodb
-        make start_local_minio
-        make make-local-bucket
-
     - name: Run full test suite
       run: |
-        export AWS_REGION=local
         make check
-
-    - name: Stop services
-      run: |
-        make stop_local_dynamodb || true
-        make stop_local_minio || true
