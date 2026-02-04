@@ -209,15 +209,15 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         state = head["Metadata"].get("state", "MA")
 
         # 2. Perform LPR via Rekognition
-        rekognition = boto3.client("rekognition")
-        rek_resp = rekognition.detect_text(
-            Image={"S3Object": {"Bucket": bucket, "Name": key}}
-        )
-        plate = next( ( t["DetectedText"] for t in rek_resp["TextDetections"] if t["Confidence"] > 90 ),
-                      "NOT_FOUND")
+        if os.environ.get('AWS_REGION','')!='local':
+            rekognition = boto3.client("rekognition")
+            rek_resp = rekognition.detect_text( Image={"S3Object": {"Bucket": bucket, "Name": key}} )
+            plate = next( ( t["DetectedText"] for t in rek_resp["TextDetections"] if t["Confidence"] > 90 ),
+                          "NOT_FOUND")
 
-        # 3. Lookup Brivo (currently stubbed)
-        result_name = brivo.brivo_lookup(plate)
+            result_name = brivo.brivo_lookup(plate)
+        else:
+            result_name = None
 
         # 4. Save record for frontend polling and history
         _get_table().put_item(
