@@ -163,6 +163,7 @@ def test_async_s3_handler(s3_event):
             patch("app.carscan.s3_client.head_object") as mock_head,
             patch("app.carscan._get_table", return_value=mock_table),
             patch("app.carscan.rekognition.detect_text") as mock_rek,
+            patch("app.carscan.brivo.brivo_lookup", return_value="Stub"),
         ):
             mock_head.return_value = {
                 "Metadata": {"user": "test@example.com", "state": "MA"}

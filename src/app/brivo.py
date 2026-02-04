@@ -13,7 +13,6 @@ import os
 import boto3
 import requests
 
-
 SECRET_PATH = Path(__file__).parent.parent.parent / "secrets" / "brivo_combined_secrets.json"
 DEFAULT_TIMEOUT = 5
 
