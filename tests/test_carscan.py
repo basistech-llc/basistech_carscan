@@ -9,8 +9,10 @@ import pytest
 
 from boto3.dynamodb.conditions import Key
 
+import conftest as conftest_module
 from app.carscan import s3_client, table
-from app.main import lambda_handler
+from app.main import COOKIE_SALT as APP_COOKIE_SALT, lambda_handler
+from app.oidc import OIDC_STATE_SALT as APP_OIDC_SALT
 
 # When set, test_async_s3_handler uses mocks (no MinIO/DynamoDB). Cursor sets
 # CURSOR_TRACE_ID in its terminal/test env; CI sets CI=true; or set CARSCAN_MOCK_S3_TEST=1.
@@ -27,11 +29,8 @@ def _use_s3_mocks():
 
 def test_conftest_salts_match_app():
     """Conftest salt constants must match app so test cookies and OIDC state verify."""
-    from app.main import COOKIE_SALT as APP_COOKIE_SALT
-    from app.oidc import OIDC_STATE_SALT as APP_OIDC_SALT
-    import conftest as c
-    assert c.COOKIE_SALT == APP_COOKIE_SALT, "conftest.COOKIE_SALT must match app.main.COOKIE_SALT"
-    assert c.OIDC_STATE_SALT == APP_OIDC_SALT, "conftest.OIDC_STATE_SALT must match app.oidc.OIDC_STATE_SALT"
+    assert conftest_module.COOKIE_SALT == APP_COOKIE_SALT, "conftest.COOKIE_SALT must match app.main.COOKIE_SALT"
+    assert conftest_module.OIDC_STATE_SALT == APP_OIDC_SALT, "conftest.OIDC_STATE_SALT must match app.oidc.OIDC_STATE_SALT"
 
 
 def _http_event(method: str, path: str, headers: dict | None = None):
