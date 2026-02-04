@@ -16,7 +16,6 @@ router = Router()  # pylint: disable=not-callable
 
 # Initialize AWS clients
 # S3 and DynamoDB are lazy so tests can set AWS_REGION=local in fixtures before first use.
-rekognition = boto3.client("rekognition")
 
 
 def _s3_config():
@@ -210,6 +209,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         state = head["Metadata"].get("state", "MA")
 
         # 2. Perform LPR via Rekognition
+        rekognition = boto3.client("rekognition")
         rek_resp = rekognition.detect_text(
             Image={"S3Object": {"Bucket": bucket, "Name": key}}
         )
