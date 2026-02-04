@@ -170,7 +170,6 @@ def test_async_s3_handler(s3_event):
         with (
             patch("app.carscan.s3_client.head_object") as mock_head,
             patch("app.carscan._get_table", return_value=mock_table),
-            patch("app.carscan.rekognition.detect_text") as mock_rek,
             patch("app.carscan.brivo.brivo_lookup", return_value="Stub"),
         ):
             mock_head.return_value = {
@@ -203,13 +202,7 @@ def test_async_s3_handler(s3_event):
         Metadata={"user": "test@example.com", "state": "MA"},
     )
 
-    with patch("app.carscan.rekognition.detect_text") as mock_rek:
-        mock_rek.return_value = {
-            "TextDetections": [
-                {"DetectedText": "ABC1234", "Type": "LINE", "Confidence": 95}
-            ],
-        }
-        lambda_handler(s3_event, {})
+    lambda_handler(s3_event, {})
 
     response = table.query(
         KeyConditionExpression=Key("user_email").eq("test@example.com"),
