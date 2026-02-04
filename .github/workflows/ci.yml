@@ -24,13 +24,20 @@ jobs:
         python -m pip install pipx
         python -m pipx ensurepath
         pipx install poetry
-    - name: Configure Poetry
-      run: |
         poetry config virtualenvs.create true
         poetry config virtualenvs.in-project true
 
-    - name: Install Python dependencies
-      run: poetry install
+    - name: Install Python and JavaScript dependencies
+      run: |
+        poetry install
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Dependencies
+      run: npm ci
 
     - name: Install Java (for DynamoDB Local)
       uses: actions/setup-java@v4
