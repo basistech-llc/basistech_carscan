@@ -32,8 +32,8 @@ jobs:
 
     - name: Wait for minio and localDynamoDB
       run: |
-        bin/local_minio_control.bash wait
         bin/local_dynamodb_control.bash wait
+        bin/local_minio_control.bash wait
 
 
     - name: Set up Python
