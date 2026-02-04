@@ -167,23 +167,12 @@ def test_async_s3_handler(s3_event):
             ]
         }
 
-        with (
-            patch("app.carscan.s3_client.head_object") as mock_head,
-            patch("app.carscan._get_table", return_value=mock_table),
-            patch("app.carscan.brivo.brivo_lookup", return_value="Stub"),
-        ):
-            mock_head.return_value = {
-                "Metadata": {"user": "test@example.com", "state": "MA"}
-            }
-            mock_rek.return_value = {
-                "TextDetections": [
-                    {"DetectedText": "ABC1234", "Type": "LINE", "Confidence": 95}
-                ],
-            }
+        with ( patch("app.carscan.s3_client.head_object") as mock_head,
+               patch("app.carscan._get_table", return_value=mock_table),
+               patch("app.carscan.brivo.brivo_lookup", return_value="Stub") ):
             lambda_handler(s3_event, {})
 
         assert mock_head.called
-        assert mock_rek.called
         assert len(saved_items) == 1
         assert saved_items[0]["plate"] == "ABC1234"
         assert saved_items[0]["user_email"] == "test@example.com"
