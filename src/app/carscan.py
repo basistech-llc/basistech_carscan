@@ -213,14 +213,8 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         rek_resp = rekognition.detect_text(
             Image={"S3Object": {"Bucket": bucket, "Name": key}}
         )
-        plate = next(
-            (
-                t["DetectedText"]
-                for t in rek_resp["TextDetections"]
-                if t["Confidence"] > 90
-            ),
-            "NOT_FOUND",
-        )
+        plate = next( ( t["DetectedText"] for t in rek_resp["TextDetections"] if t["Confidence"] > 90 ),
+                      "NOT_FOUND")
 
         # 3. Lookup Brivo (currently stubbed)
         result_name = brivo.brivo_lookup(plate)
