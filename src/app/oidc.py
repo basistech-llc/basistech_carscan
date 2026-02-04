@@ -14,10 +14,11 @@ dependency but add more manual payload/options and less specific exceptions. We
 keep itsdangerous unless we explicitly want to drop that dependency.
 """
 
+import hashlib
+import functools
 import json
 import os
 import base64
-import hashlib
 import secrets
 import time
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
@@ -61,6 +62,7 @@ def _normalize_google_secret(payload: dict) -> dict:
     }
 
 
+@functools.lru_cache(maxsize=1)
 def get_oidc_config() -> dict:
     """
     Load OIDC config from AWS Secrets Manager using GOOGLE_SECRET_ARN.
@@ -94,12 +96,18 @@ def get_oidc_config() -> dict:
     config["hmac_secret"] = raw.get("hmac_secret", payload["client_secret"])
     return config
 
+def get_oidc_config_hash() -> str:
+    """Returns a stable hash of the OIDC config for use as the URLSafeTimedSerializer secret."""
+    config = get_oidc_config()
+    canonical = json.dumps(config, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+# Changing OIDC_STATE_SALT invalidates in-flight login flows (users must start login again).
+OIDC_STATE_SALT = "oidc-state-v1"
 
 
-# Helper: stateless state serializer
 def _state_serializer(secret_key: str) -> URLSafeTimedSerializer:
-    # Change salt to rotate state format without changing your secret
-    return URLSafeTimedSerializer(secret_key=secret_key, salt="oidc-state-v1")
+    return URLSafeTimedSerializer(secret_key=secret_key, salt=OIDC_STATE_SALT)
 
 
 def load_openid_config(discovery_url: str, *, client_id: str, redirect_uri: str) -> dict:

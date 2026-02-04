@@ -28,12 +28,13 @@ app = APIGatewayHttpResolver(enable_validation=False)
 template_dir = os.path.join(os.path.dirname(__file__), 'templates')
 jinja_env = Environment(loader=FileSystemLoader(template_dir))
 
-# Session cookie signer. TODO: migrate secret to Amazon Secrets Manager.
-_COOKIE_SECRET = "hardcoded-secret-changeme"
-_COOKIE_MAX_AGE = 7 * 24 * 3600  # 7 days
+# Session cookie signer uses OIDC config hash (from Secrets Manager) so we don't need a separate secret.
+# Changing COOKIE_SALT invalidates all existing session cookies (one-time logout everyone).
+COOKIE_SALT = "user_session"
+COOKIE_MAX_AGE = 7 * 24 * 3600  # 7 days
 _cookie_signer = URLSafeTimedSerializer(
-    secret_key=_COOKIE_SECRET,
-    salt="user_session",
+    secret_key=oidc_module.get_oidc_config_hash(),
+    salt=COOKIE_SALT,
 )
 
 
@@ -70,7 +71,7 @@ def _get_email_from_cookie(app_instance: APIGatewayHttpResolver) -> str | None:
     if not raw:
         return None
     try:
-        email = _cookie_signer.loads(raw, max_age=_COOKIE_MAX_AGE)
+        email = _cookie_signer.loads(raw, max_age=COOKIE_MAX_AGE)
     except (BadSignature, SignatureExpired, Exception):  # pylint: disable=broad-except
         logger.debug("user_session cookie invalid or expired")
         return None

@@ -15,6 +15,7 @@ import socket
 import threading
 import time
 import urllib.request
+from unittest.mock import patch
 from urllib.parse import parse_qsl, urlparse
 
 from itsdangerous import URLSafeTimedSerializer
@@ -77,7 +78,7 @@ def mock_oidc_idp(monkeypatch):
     jwks_uri = f"{issuer}/jwks"
 
     hmac_secret = "super-secret-hmac"
-    serializer = URLSafeTimedSerializer(secret_key=hmac_secret, salt="oidc-state-v1")
+    serializer = URLSafeTimedSerializer(secret_key=hmac_secret, salt=OIDC_STATE_SALT)
     code_store = {}
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -216,7 +217,7 @@ def _make_fake_idp_app(hmac_secret: str, base_url: str):
     from flask import Flask, redirect, request
 
     app = Flask(__name__)
-    serializer = URLSafeTimedSerializer(secret_key=hmac_secret, salt="oidc-state-v1")
+    serializer = URLSafeTimedSerializer(secret_key=hmac_secret, salt=OIDC_STATE_SALT)
     code_store = {}
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
@@ -341,13 +342,22 @@ def set_test_env_vars(monkeypatch):
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
 
 
-# Must match main._COOKIE_SECRET so tests can send valid signed session cookies
+# Cookie signer secret used in tests. main.py uses oidc.get_oidc_config_hash() in production;
+# we patch that when loading main so the app's cookie signer uses this value and test cookies verify.
 _TEST_COOKIE_SECRET = "hardcoded-secret-changeme"
+
+# Load app.main with get_oidc_config_hash patched so _cookie_signer is created with _TEST_COOKIE_SECRET.
+# This must run before any test imports app.main (conftest loads first).
+with patch("app.oidc.get_oidc_config_hash", return_value=_TEST_COOKIE_SECRET):
+    import app.main as _app_main  # noqa: E402, F401
+
+from app.main import COOKIE_SALT
+from app.oidc import OIDC_STATE_SALT
 
 
 def _signed_user_session(email: str) -> str:
     """Return a signed user_session cookie value (same secret/salt as main)."""
-    signer = URLSafeTimedSerializer(secret_key=_TEST_COOKIE_SECRET, salt="user_session")
+    signer = URLSafeTimedSerializer(secret_key=_TEST_COOKIE_SECRET, salt=COOKIE_SALT)
     return signer.dumps(email)
 
 
