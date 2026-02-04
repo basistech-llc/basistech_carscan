@@ -101,6 +101,7 @@ Resources:
       Timeout: 60
       MemorySize: 512
       Policies:
+        - AmazonRekognitionFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref BrivoScanTable
         - Version: "2012-10-17"
@@ -112,7 +113,9 @@ Resources:
                 - !Ref BrivoApiKeyArn
             - Effect: Allow
               Action:
+                - s3:HeadObject
                 - s3:PutObject
+                - s3:GetObject
                 - s3:ListBucket
               Resource:
                 - !Sub "arn:${AWS::Partition}:s3:::${ImageBucketName}"

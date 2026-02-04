@@ -50,6 +50,7 @@ start_minio() {
 
     echo "Minio Local started in the background (PID: $!)."
     wait_minio
+    echo "Minio endpoint: http://localhost:9000"
 }
 
 # Function to stop MinIO Local

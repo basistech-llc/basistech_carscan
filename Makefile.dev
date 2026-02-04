@@ -351,8 +351,12 @@ list-local-buckets:
 
 ################################################################
 ### build and deploy
-### cfn-lint makes an error if AWS_REGION is local...
+aws-login:
+	open -n -a "Google Chrome" --args --profile-directory="Profile 1"
+	aws login
+
 sam-lint:
+	@echo always use us-east-1 for cfn-lint
 	AWS_REGION=us-east-1 poetry run cfn-lint template.yaml
 	sam validate --lint
 
@@ -361,10 +365,12 @@ sam-build:
 	poetry export -f requirements.txt --output src/requirements.txt --without-hashes
 	sam build
 
-sam-deploy: build
+sam-deploy:
+	printenv | grep AWS
 	sam deploy
 
-sam-deploy-guided: build
+sam-deploy-guided:
+	printenv | grep AWS
 	sam deploy --guided
 
 list-domains:

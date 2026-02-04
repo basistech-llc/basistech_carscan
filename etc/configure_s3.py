@@ -22,9 +22,11 @@ def get_bucket_from_samconfig(config_path="samconfig.toml"):
 
 def enable_eventbridge(bucket_name, region, origin):
     """Enables EventBridge notifications for the specified S3 bucket."""
+    print(f"enable_eventbridge({bucket_name},{region},{origin})")
     s3 = boto3.client('s3', region_name=region)
 
     try:
+        print(f"put_bucket_notification_configuration({bucket_name})")
         s3.put_bucket_notification_configuration(
             Bucket=bucket_name,
             NotificationConfiguration={
@@ -33,6 +35,7 @@ def enable_eventbridge(bucket_name, region, origin):
         )
         print("Success: S3 events are now being sent to EventBridge.")
 
+        print(f"put_bucket_lifecycle_configuration({bucket_name})")
         s3.put_bucket_lifecycle_configuration(
             Bucket=bucket_name,
             LifecycleConfiguration={
@@ -55,6 +58,7 @@ def enable_eventbridge(bucket_name, region, origin):
                 'MaxAgeSeconds': 3000
             }]
         }
+        print(f"put_bucket_cors({bucket_name})")
         s3.put_bucket_cors(Bucket=bucket_name, CORSConfiguration=cors_configuration)
         print(f"Done: CORS policy applied for {origin}.")
 
@@ -65,7 +69,7 @@ def enable_eventbridge(bucket_name, region, origin):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Enable EventBridge notifications on an S3 bucket.")
     parser.add_argument("--bucket", help="S3 bucket name (overrides samconfig.toml)")
-    parser.add_argument("--origin", default="https://carscan.nitroba.com", help="Allowed origin for CORS")
+    parser.add_argument("--origin", default="https://carscan.basistech.io", help="Allowed origin for CORS")
     parser.add_argument("--config", default="samconfig.toml", help="Path to samconfig file")
     parser.add_argument("--region", default="us-east-1", help="AWS Region")
 
@@ -79,3 +83,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     enable_eventbridge(target_bucket, args.region, args.origin)
+    print("Check CORS policy with:")
+    print("AWS_PROFILE=basistech AWS_REGION=us-east-2 aws s3api get-bucket-cors --bucket basistech-carscan-images")
