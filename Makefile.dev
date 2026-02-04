@@ -250,6 +250,42 @@ stop_local_dynamodb:  bin/DynamoDBLocal.jar
 .PHONY: start_local_dynamodb stop_local_dynamodb
 ################################################################
 
+################################################################
+# Minio (S3 clone -- see: https://min.io/)
+# Installations are used by the CI pipeline and by local developers
+
+bin/minio:
+	@echo downloading and installing minio
+	mkdir -p bin
+	uname -a
+	if [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "amd64" ] ; then \
+		echo Linux amd64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "x86_64" ] ; then \
+		echo Linux x86_64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "aarch64" ] ; then \
+		echo Linux aarch64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "arm64" ] ; then \
+		echo Linux arm64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MINIO_MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
+	else \
+		echo unknown os/architecture; exit 1; \
+	fi
+	chmod +x bin/minio
+	ls -l bin/minio
+	if [ "$$(uname -s)" = "Linux" ] ; then \
+		chmod +x bin/mc ; \
+		ls -l bin/mc ; \
+	fi
+
+start_local_minio: bin/minio
+	bash bin/local_minio_control.bash start
+
+stop_local_minio:  bin/minio
+	bash bin/local_minio_control.bash stop
+.PHONY: start_local_minio stop_local_minio
+###############################################################
+## S3/DynamoDB controls
+
 .PHONY: ensure-local-services create-tables delete-tables list-tables
 ensure-local-services:
 	@# Ensure DynamoDB Local is running and tables exist
@@ -292,43 +328,6 @@ endif
 list-tables:
 	aws dynamodb list-tables
 
-################################################################
-# Minio (S3 clone -- see: https://min.io/)
-# Installations are used by the CI pipeline and by local developers
-
-bin/minio:
-	@echo downloading and installing minio
-	mkdir -p bin
-	uname -a
-	if [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "amd64" ] ; then \
-		echo Linux amd64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "x86_64" ] ; then \
-		echo Linux x86_64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "aarch64" ] ; then \
-		echo Linux aarch64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "arm64" ] ; then \
-		echo Linux arm64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MINIO_MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
-	else \
-		echo unknown os/architecture; exit 1; \
-	fi
-	chmod +x bin/minio
-	ls -l bin/minio
-	if [ "$$(uname -s)" = "Linux" ] ; then \
-		chmod +x bin/mc ; \
-		ls -l bin/mc ; \
-	fi
-
-start_local_minio: bin/minio
-	bash bin/local_minio_control.bash start
-
-stop_local_minio:  bin/minio
-	bash bin/local_minio_control.bash stop
-.PHONY: start_local_minio stop_local_minio
-###############################################################
-list-local-buckets:
-	aws s3 ls
-
 make-local-bucket:
 	@BUCKET_NAME=$${BUCKET_NAME:-$(TEST_BUCKET)}; \
 	if [ -z "$$BUCKET_NAME" ]; then \
@@ -343,6 +342,9 @@ make-local-bucket:
 	fi
 	@echo "Local buckets:"
 	@aws s3 ls 2>/dev/null || echo "Could not list buckets"
+
+list-local-buckets:
+	aws s3 ls
 
 .PHONY: list-local-buckets make-local-bucket
 

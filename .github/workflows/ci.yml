@@ -18,11 +18,6 @@ jobs:
         image: amazon/dynamodb-local
         ports:
           - 8000:8000
-        options: >-
-          --health-cmd "curl -f http://localhost:8000 || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
       minio:
         image: minio/minio
         ports:
