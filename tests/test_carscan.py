@@ -25,6 +25,15 @@ def _use_s3_mocks():
     return False
 
 
+def test_conftest_salts_match_app():
+    """Conftest salt constants must match app so test cookies and OIDC state verify."""
+    from app.main import COOKIE_SALT as APP_COOKIE_SALT
+    from app.oidc import OIDC_STATE_SALT as APP_OIDC_SALT
+    import conftest as c
+    assert c.COOKIE_SALT == APP_COOKIE_SALT, "conftest.COOKIE_SALT must match app.main.COOKIE_SALT"
+    assert c.OIDC_STATE_SALT == APP_OIDC_SALT, "conftest.OIDC_STATE_SALT must match app.oidc.OIDC_STATE_SALT"
+
+
 def _http_event(method: str, path: str, headers: dict | None = None):
     """Build HTTP API v2 event for method and path (no pathParameters for explicit routes)."""
     return {

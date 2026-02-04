@@ -21,6 +21,10 @@ from urllib.parse import parse_qsl, urlparse
 from itsdangerous import URLSafeTimedSerializer
 import pytest
 
+# Must match app.main.COOKIE_SALT and app.oidc.OIDC_STATE_SALT (test_conftest_salts_match_app enforces).
+COOKIE_SALT = "user_session"
+OIDC_STATE_SALT = "oidc-state-v1"
+
 # -----------------------------------------------------------------------------
 # Mock OIDC IdP (no socket bind): patches requests.get/post so OIDC tests run
 # without starting a real server. Use fixture mock_oidc_idp in OIDC tests.
@@ -350,9 +354,6 @@ _TEST_COOKIE_SECRET = "hardcoded-secret-changeme"
 # This must run before any test imports app.main (conftest loads first).
 with patch("app.oidc.get_oidc_config_hash", return_value=_TEST_COOKIE_SECRET):
     import app.main as _app_main  # noqa: E402, F401
-
-from app.main import COOKIE_SALT
-from app.oidc import OIDC_STATE_SALT
 
 
 def _signed_user_session(email: str) -> str:
