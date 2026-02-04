@@ -12,83 +12,10 @@ from aws_lambda_powertools.event_handler.router import Router
 from . import brivo
 
 logger = Logger(child=True)
-router = Router()  # pylint: disable=not-callable
-
-# Initialize AWS clients
-# S3 and DynamoDB are lazy so tests can set AWS_REGION=local in fixtures before first use.
-
-
-def _s3_config():
-    """Build S3 client config from current env (lazy for tests)."""
-    cfg = {}
-    if os.environ.get("AWS_REGION") == "local":
-        endpoint = os.environ.get("AWS_ENDPOINT_URL_S3", "http://localhost:9100/")
-        if endpoint:
-            cfg["endpoint_url"] = endpoint
-    return cfg
-
-
-def _dynamodb_config():
-    """Build DynamoDB resource config from current env (lazy for tests)."""
-    cfg = {}
-    if os.environ.get("AWS_REGION") == "local":
-        endpoint = os.environ.get("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8010/")
-        if endpoint:
-            cfg["endpoint_url"] = endpoint
-    return cfg
-
-
-class _LazyS3Client: # pylint: disable=too-few-public-methods
-    """Create S3 client on first use so env (e.g. AWS_REGION=local) is read after pytest fixtures."""
-
-    _client = None
-
-    def _get(self):
-        if self._client is None:
-            self._client = boto3.client("s3", **_s3_config())
-        return self._client
-
-    def __getattr__(self, name):
-        return getattr(self._get(), name)
-
-
-class _LazyDynamoDB: # pylint: disable=too-few-public-methods
-    """Create DynamoDB resource on first use so env is read after pytest fixtures."""
-
-    _resource = None
-
-    def _get(self):
-        if self._resource is None:
-            self._resource = boto3.resource("dynamodb", **_dynamodb_config())
-        return self._resource
-
-    def __getattr__(self, name):
-        return getattr(self._get(), name)
-
-
-s3_client = _LazyS3Client()
-dynamodb = _LazyDynamoDB()
-
-
-def _get_table():
-    """Get the DynamoDB table, reading table name from environment dynamically."""
-    table_name = os.environ.get("TABLE_NAME", "test-table")
-    return dynamodb.Table(table_name)
-
-# Lazy table accessor - reads table name from environment each time it's accessed
-class _LazyTable:
-    """Lazy table accessor that reads table name from environment each time."""
-
-    def __getattr__(self, name):
-        # Delegate all attribute access to the dynamically-created table
-        return getattr(_get_table(), name)
-
-    def __call__(self, *args, **kwargs):
-        # Handle if table is called as a function (shouldn't happen, but be safe)
-        return _get_table()(*args, **kwargs)
-
-table = _LazyTable()
-
+router = Router()                  # pylint: disable=not-callable
+s3_client = boto3.client("s3")
+dynamodb  = boto3.resource("dynamodb")
+table     = dynamodb.Table(os.getenv("TABLE_NAME","cala-garage-scans"))
 
 # --- API Routes ---
 
@@ -128,7 +55,7 @@ def get_scan_status(job_id: str) -> Dict[str, Any]:
     """Polled by the frontend to check if LPR is complete."""
     user = router.context.get("user_email")
 
-    response = _get_table().get_item(
+    response = table.get_item(
         Key={
             "user_email": user,
             "sk": f"job#{job_id}",
@@ -150,7 +77,7 @@ def get_user_history() -> list:
         # If context not set, this is an error - middleware should have caught this
         # But if it somehow got through, return empty list
         return []
-    resp = _get_table().query(
+    resp = table.query(
         KeyConditionExpression=Key("user_email").eq(user),
         ScanIndexForward=False,
         Limit=50,
@@ -184,7 +111,7 @@ def manual_entry() -> Dict[str, Any]:
         "image_key": "manual",
     }
     try:
-        _get_table().put_item(Item=item)
+        table.put_item(Item=item)
     except Exception as e:         # pylint: disable=broad-exception-caught
         logger.error("Exception: %s",e)
 
@@ -221,7 +148,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
             plate = "n/a"
 
         # 4. Save record for frontend polling and history
-        _get_table().put_item(
+        table.put_item(
             Item={
                 "user_email": user,
                 "sk": f"job#{key}",
