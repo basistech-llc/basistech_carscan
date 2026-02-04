@@ -1,6 +1,5 @@
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
-const stateSelect = document.getElementById('state-select');
 const UPLOAD_TIMEOUT_SECONDS = 10;
 
 // Get current API base path (e.g. /Prod/ or /Staging/) from window location
@@ -21,18 +20,21 @@ async function initCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { exact: "environment" } } // Force rear camera
     });
+    console.log("using rear campera");
     video.srcObject = stream;
   } catch (err) {
     console.warn("Rear camera failed, trying default", err);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       video.srcObject = stream;
+      console.log("using default campera");
     } catch {
       alert("Camera access denied.");
     }
   }
 }
 
+// Discount HTML tab selection
 // Used in HTML: onclick="showTab('scan')"
 // eslint-disable-next-line no-unused-vars
 function showTab(tabName) {
@@ -43,7 +45,6 @@ function showTab(tabName) {
 
 async function post_image(image) {
   showResult("Processing...", "", null);
-  console.log("post_image",image);
 
   // 1. Get Presigned URL
   fetch('api/upload-url', {method:"GET"})
@@ -85,6 +86,7 @@ async function captureAndScan() {
 
 // Used in HTML: onclick="manualSearch()"
 // eslint-disable-next-line no-unused-vars
+// This seems to work
 async function manualSearch() {
   const text = document.getElementById('manual-plate').value;
   if(!text) return;
@@ -105,6 +107,7 @@ async function manualSearch() {
     var show  = "";
     var show2 = "not found";
     if (data.result){
+      found = true;
       show = data.result.firstName + " " + data.result.lastName;
       if (data.result.phoneNumbers && data.result.phoneNumbers[0]) {
         show2 += " " + data.result.phoneNumbers[0].number + " ";
@@ -138,18 +141,20 @@ async function pollForResult(jobId) {
     } catch (e) {
       console.error("Polling error", e);
     }
-  }, 1500);
+  }, 1000);
 
-  // Timeout after 30 seconds
+  // Timeout after 10 seconds
   setTimeout(() => {
     clearInterval(poll);
-  }, 30000);
+    showResult("Failed", "Enter plate manually.", false);
+  }, 10000);
 }
 
 /**
  * UI Display Helper
  */
 function showResult(title, subtitle, isSuccess) {
+  console.log(`showResult(${title},${subtitle},${isSuccess});`);
   const box = document.getElementById('result-display');
   box.className = 'result-box';
   if (isSuccess === true) box.classList.add('success');

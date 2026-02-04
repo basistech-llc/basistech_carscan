@@ -135,6 +135,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
 
     try:
         # 1. Retrieve metadata stored during the presigned post
+        logger.info("s3_client=%s bucket=%s key=%s",s3_client,bucket,key)
         head = s3_client.head_object(Bucket=bucket, Key=key)
         user = head["Metadata"].get("user")
         state = head["Metadata"].get("state", "MA")

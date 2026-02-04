@@ -1,9 +1,18 @@
-include Makefile.dev
+################################################################
+# Settings for deployment
+#
+# usage:
+# AWS_REGION=local make pytest                  Local testing
+# AWS_REGION=us-east-2 make sam-deploy          Deployment
+
+export AWS_PROFILE=basistech
+
+
 
 ################################################################
-# Create the virtual enviornment for testing and CI/CD
+## Bring in combined makefile
 
-APP_ETC=app/etc
+include Makefile.dev
 
 # Testing commands - use poetry run
 test:
