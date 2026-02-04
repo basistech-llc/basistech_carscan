@@ -14,6 +14,10 @@ from . import brivo
 logger = Logger(child=True)
 router = Router()                  # pylint: disable=not-callable
 s3_client = boto3.client("s3")
+
+print("********** AWS REGION:",os.getenv('AWS_REGION'))
+print("********** AWS DYNAMODB:",os.getenv('AWS_ENDPOINT_URL_DYNAMODB'))
+
 dynamodb  = boto3.resource("dynamodb")
 table     = dynamodb.Table(os.getenv("TABLE_NAME","cala-garage-scans"))
 
