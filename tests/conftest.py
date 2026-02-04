@@ -395,7 +395,7 @@ def s3_event():
     return {
         "source": "aws.s3",
         "detail": {
-            "bucket": {"name": "test-bucket"},
+            "bucket": {"name": os.environ['TEST_BUCKET']},
             "object": {"key": "uploads/12345-test.jpg"},
         },
     }

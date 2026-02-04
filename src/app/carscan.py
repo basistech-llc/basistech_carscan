@@ -218,6 +218,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
             result_name = brivo.brivo_lookup(plate)
         else:
             result_name = None
+            plate = "n/a"
 
         # 4. Save record for frontend polling and history
         _get_table().put_item(

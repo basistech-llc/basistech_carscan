@@ -12,8 +12,6 @@
 
 
 # Things you might want to change go here:
-LOCAL_BUCKET ?= s3bucket
-LOCAL_HTTP_PORT ?= 8080
 LOG_LEVEL ?= DEBUG		# default to debug unless changed
 PYLINT_THRESHOLD ?= 10.0
 STATIC_DIR ?= src/app/static
@@ -29,6 +27,7 @@ ifeq ($(AWS_REGION),local)
     export AWS_SECRET_ACCESS_KEY     := minioadmin
     export AWS_ENDPOINT_URL_DYNAMODB := http://localhost:8010/
     export AWS_ENDPOINT_URL_S3       := http://localhost:9100/
+    export TEST_BUCKET               := s3bucket
 endif
 
 PYR := .venv/pyvenv.cfg
@@ -37,9 +36,6 @@ SYR := bin/minio
 TS_FILES := $(wildcard *.ts */*.ts)
 JS_FILES := $(TS_FILES:.ts=.js)
 DYNAMODB_LOCAL_DOWNLOAD_URL:=https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_latest.zip
-
-# PT_VARS are required for any command that uses planttracer but with dynamically-generated prefixes
-PT_VARS := $(AWS_VARS) PLANTTRACER_S3_BUCKET=$(LOCAL_BUCKET)
 
 ################################################################
 # Main targets used by CI/CD system and developers
@@ -156,7 +152,7 @@ wipe-local: $(DYR) $(SYR)
 	mkdir -p var
 	bin/local_minio_control.bash start
 	bin/local_dynamodb_control.bash start
-	make make-local-bucket
+	make make-test-bucket
 
 delete-local: $(DYR) $(SYR)
 	@echo deleting all local artifacts
@@ -230,7 +226,7 @@ ensure-local-services:
 	@if [ "$(AWS_REGION)" = "local" ]; then \
 		echo "Ensuring local services are ready..."; \
 		make create-tables || true; \
-		make make-local-bucket; \
+		make make-test-bucket; \
 		echo "Local services ready."; \
 	fi
 
@@ -325,11 +321,11 @@ stop_local_minio:  bin/minio
 list-local-buckets:
 	$(AWS_VARS) aws s3 ls
 
-make-local-bucket:
-	@BUCKET_NAME=$${BUCKET_NAME:-$(LOCAL_BUCKET)}; \
+make-test-bucket:
+	@BUCKET_NAME=$${BUCKET_NAME:-$(TEST_BUCKET)}; \
 	if [ -z "$$BUCKET_NAME" ]; then \
-		echo "Warning: BUCKET_NAME not set, using default $(LOCAL_BUCKET)"; \
-		BUCKET_NAME=$(LOCAL_BUCKET); \
+		echo "Warning: BUCKET_NAME not set, using default $(TEST_BUCKET)"; \
+		BUCKET_NAME=$(TEST_BUCKET); \
 	fi; \
 	if $(AWS_VARS) aws s3 ls s3://$$BUCKET_NAME/ >/dev/null 2>&1; then \
 	 	echo "Bucket $$BUCKET_NAME exists"; \
@@ -340,7 +336,7 @@ make-local-bucket:
 	@echo "Local buckets:"
 	@$(AWS_VARS) aws s3 ls 2>/dev/null || echo "Could not list buckets"
 
-.PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
+.PHONY: start_local_minio stop_local_minio list-local-buckets make-test-bucket
 
 ################################################################
 ### build and deploy

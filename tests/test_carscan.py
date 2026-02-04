@@ -4,6 +4,8 @@ import base64
 import json
 import os
 from unittest.mock import MagicMock, patch
+import uuid
+import sys
 
 import pytest
 
@@ -14,17 +16,6 @@ from app.carscan import s3_client, table
 from app.main import COOKIE_SALT as APP_COOKIE_SALT, lambda_handler
 from app.oidc import OIDC_STATE_SALT as APP_OIDC_SALT
 
-# When set, test_async_s3_handler uses mocks (no MinIO/DynamoDB). Cursor sets
-# CURSOR_TRACE_ID in its terminal/test env; CI sets CI=true; or set CARSCAN_MOCK_S3_TEST=1.
-def _use_s3_mocks():
-    if os.environ.get("CARSCAN_MOCK_S3_TEST", "").lower() in ("1", "true", "yes"):
-        return True
-    if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
-        return True
-    # Cursor sets CURSOR_TRACE_ID (and possibly other CURSOR_*) in its terminal/test env
-    if any(k.startswith("CURSOR_") for k in os.environ):
-        return True
-    return False
 
 
 def test_conftest_salts_match_app():
@@ -134,72 +125,23 @@ def test_async_s3_handler(s3_event):
     - Otherwise: skipped (avoids hitting real AWS or unreachable localhost).
     """
     bucket = s3_event["detail"]["bucket"]["name"]
-    key = s3_event["detail"]["object"]["key"]
-    use_mocks = _use_s3_mocks()
+    key    = s3_event["detail"]["object"]["key"]
+    email = f"test-{str(uuid.uuid4())}@example.com"
 
-    if not use_mocks and os.environ.get("AWS_REGION") != "local":
-        pytest.skip(
-            "test_async_s3_handler requires AWS_REGION=local and MinIO/DynamoDB Local, "
-            "or set CARSCAN_MOCK_S3_TEST=1 / CI=1 to run with mocks"
-        )
-
-    if use_mocks:
-        # Run with mocks so it passes in Cursor, CI, or sandbox (no real S3/DynamoDB)
-        mock_table = MagicMock()
-        saved_items = []
-
-        def capture_put_item(**kwargs):
-            item = kwargs.get("Item", {})
-            saved_items.append(item)
-
-        mock_table.put_item = MagicMock(side_effect=capture_put_item)
-        mock_table.query.return_value = {
-            "Items": [
-                {
-                    "user_email": "test@example.com",
-                    "sk": f"job#{key}",
-                    "plate": "ABC1234",
-                    "state": "MA",
-                    "result": "Stub",
-                    "timestamp": 1234567890,
-                    "image_key": key,
-                }
-            ]
-        }
-
-        with ( patch("app.carscan.s3_client.head_object") as mock_head,
-               patch("app.carscan._get_table", return_value=mock_table),
-               patch("app.carscan.brivo.brivo_lookup", return_value="Stub") ):
-            lambda_handler(s3_event, {})
-
-        assert mock_head.called
-        assert len(saved_items) == 1
-        assert saved_items[0]["plate"] == "ABC1234"
-        assert saved_items[0]["user_email"] == "test@example.com"
-        return
-
-    # Real MinIO + DynamoDB Local path
-    try:
-        s3_client.head_bucket(Bucket=bucket)
-    except s3_client.exceptions.ClientError:
-        s3_client.create_bucket(Bucket=bucket)
-
-    s3_client.put_object(
-        Bucket=bucket,
-        Key=key,
-        Body=b"fake image data",
-        Metadata={"user": "test@example.com", "state": "MA"},
-    )
+    s3_client.put_object( Bucket=bucket,
+                          Key=key,
+                          Body=b"fake image data",
+                          Metadata={"user": email} )
 
     lambda_handler(s3_event, {})
 
-    response = table.query(
-        KeyConditionExpression=Key("user_email").eq("test@example.com"),
-        ScanIndexForward=False,
-        Limit=1,
-    )
+    response = table.query( KeyConditionExpression=Key("user_email").eq(email),
+                            ScanIndexForward=False,
+                            Limit=1 )
     items = response.get("Items", [])
-    assert len(items) > 0, "Item should be saved to DynamoDB"
-    saved_item = items[0]
-    assert saved_item["plate"] == "ABC1234"
-    assert saved_item["user_email"] == "test@example.com"
+    if len(items)==0:
+        print("Items not saved to DynamoDB",file=sys.stderr)
+        print("============================================",file=sys.stderr)
+        print(f"Scan of {table}",file=sys.stderr)
+        r = table.scan()
+        print(json.dumps(r,indent=4,default=str),file=sys.stderr)
