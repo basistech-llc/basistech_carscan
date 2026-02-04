@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: local
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
     services:
       dynamodb:
         image: amazon/dynamodb-local
