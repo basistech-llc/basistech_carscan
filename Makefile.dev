@@ -152,7 +152,7 @@ wipe-local: $(DYR) $(SYR)
 	mkdir -p var
 	bin/local_minio_control.bash start
 	bin/local_dynamodb_control.bash start
-	make make-test-bucket
+	make make-local-bucket
 
 delete-local: $(DYR) $(SYR)
 	@echo deleting all local artifacts
@@ -226,7 +226,7 @@ ensure-local-services:
 	@if [ "$(AWS_REGION)" = "local" ]; then \
 		echo "Ensuring local services are ready..."; \
 		make create-tables || true; \
-		make make-test-bucket; \
+		make make-local-bucket; \
 		echo "Local services ready."; \
 	fi
 
@@ -321,7 +321,7 @@ stop_local_minio:  bin/minio
 list-local-buckets:
 	$(AWS_VARS) aws s3 ls
 
-make-test-bucket:
+make-local-bucket:
 	@BUCKET_NAME=$${BUCKET_NAME:-$(TEST_BUCKET)}; \
 	if [ -z "$$BUCKET_NAME" ]; then \
 		echo "Warning: BUCKET_NAME not set, using default $(TEST_BUCKET)"; \
@@ -336,7 +336,7 @@ make-test-bucket:
 	@echo "Local buckets:"
 	@$(AWS_VARS) aws s3 ls 2>/dev/null || echo "Could not list buckets"
 
-.PHONY: start_local_minio stop_local_minio list-local-buckets make-test-bucket
+.PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
 
 ################################################################
 ### build and deploy
