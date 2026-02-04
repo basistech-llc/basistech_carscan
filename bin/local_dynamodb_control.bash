@@ -110,8 +110,17 @@ case "$1" in
             echo "DynamoDB Local is not running."
         fi
         ;;
+    wait)
+        wait_dynamodb_local
+        ;;
+    debug)
+        echo MYDIR=$MYDIR
+        echo LOGDIR=$LOGDIR
+        echo DBDIR=$DBDIR
+        echo FLAGS=$FLAGS
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status}"
+        echo "Usage: $0 {start|stop|restart|status|wait}"
         exit 1
         ;;
 esac

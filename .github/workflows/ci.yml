@@ -27,7 +27,13 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Wait for minio and localDynamoDB
+      run: |
+        bin/local_minio_control.bash wait
+
 
     - name: Set up Python
       uses: actions/setup-python@v5
