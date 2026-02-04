@@ -6,11 +6,12 @@
   "type": "module",
   "scripts": {
     "test": "node tests/camera.test.js",
-    "lint": "eslint src/app/static/*.js src/app/templates/*.js || true",
+    "lint": "eslint \"src/app/static/**/*.js\" \"tests/**/*.js\"",
     "coverage": "c8 --include='src/app/static/*.js' --reporter=text --reporter=lcov node tests/camera.test.js"
   },
   "devDependencies": {
-    "jsdom": "^24.1.3",
-    "c8": "^10.1.3"
+    "c8": "^10.1.3",
+    "eslint": "^9.15.0",
+    "jsdom": "^24.1.3"
   }
 }

@@ -5,31 +5,9 @@ include Makefile.dev
 
 APP_ETC=app/etc
 
-run:
-	source $(API_KEY) && poetry run python -m src.robot.news_robot news_config.json
-
-runb:
-	source $(API_KEY) && poetry run python -m src.robot.news_robot news_basis.json
-
-runs:
-	source $(API_KEY) && poetry run python -m src.robot.news_robot news_ai2050.json
-
-runk:
-	source $(API_KEY) && poetry run python -m src.robot.news_robot news_keziah.json
-
-gcloud-auth:
-	source gcp-config.bash && gcloud auth application-default login --impersonate-service-account=GCP_SA_EMAIL
-
 # Testing commands - use poetry run
 test:
 	poetry run pytest tests/ -v
-
-test-ner:
-	poetry run pytest tests/test_text_ner.py -v
-
-test-news:
-	poetry run pytest tests/test_news_robot.py -v
-
 
 install-ubuntu:
 	sudo apt-get update
@@ -57,3 +35,14 @@ local-s3-event:
 	@rm temp_event.json
 
 ################################################################
+
+### startup
+upload-google-oidc-secret:
+	aws secretsmanager create-secret \
+	--name google-oidc \
+	--secret-string file://secrets/google_oidc_secret.json
+
+upload-brivo-oidc-secret:
+	aws secretsmanager create-secret \
+	--name brivo \
+	--secret-string file://secrets/brivo_combined_secrets.json

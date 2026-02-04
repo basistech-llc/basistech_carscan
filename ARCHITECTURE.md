@@ -15,7 +15,11 @@ API Gateway HTTP API
     ↓
 Lambda Function (main.py)
     ↓
-├─→ Authentication Middleware (cookie-based)
+├─→ Unauthenticated: GET / → landing page (Google Login)
+├─→ GET /auth/login → redirect to Google OIDC
+├─→ GET /auth/callback → exchange code, set user_session cookie, redirect to /
+├─→ Authenticated: GET / → camera app (camera.html)
+├─→ Authentication Middleware (user_session cookie, set after OIDC)
 ├─→ API Routes (carscan.py)
 │   ├─→ /api/upload-url (presigned S3 URL)
 │   ├─→ /api/status/<job_id> (polling endpoint)
@@ -50,11 +54,11 @@ Lambda Function (main.py)
   - S3 EventBridge events → `handle_s3_event()`
   - Scheduled events → heartbeat response
 
-#### 3. Authentication
-- **Method**: Cookie-based session authentication
-- **Implementation**: `check_auth()` middleware in `main.py`
-- **Note**: Google OAuth is referenced in templates but not implemented in code
-- **Current State**: Simple cookie parsing (`user_session=<email>`)
+#### 3. Authentication (OIDC with Google)
+- **Method**: Google OIDC provider; session stored in `user_session` cookie after login
+- **Implementation**: `src/app/oidc.py` (discovery, auth URL, token exchange, ID token verification); `main.py` routes `/auth/login`, `/auth/callback` and `check_auth` middleware
+- **Config**: JSON in AWS Secrets Manager at `GOOGLE_SECRET_ARN` (client_id, client_secret, redirect_uri; optional oidc_discovery_endpoint, defaults to Google)
+- **Landing**: Unauthenticated users see `landing.html` with "Google Login" button; authenticated users see camera app at `/`
 
 #### 4. API Routes (`carscan.py`)
 - **Router**: AWS Lambda Powertools Router
@@ -141,18 +145,18 @@ Lambda Function (main.py)
 ### Security
 
 #### Current Implementation
-- Cookie-based authentication (simple string parsing)
-- No session validation or expiration
-- No HTTPS enforcement in code
-- Secrets stored in AWS Secrets Manager
+- Google OIDC authentication; session cookie (`user_session`) set after successful login
+- State parameter signed with HMAC (CSRF/replay); PKCE for code exchange
+- Secrets (Google client, Brivo API key) in AWS Secrets Manager
 - IAM policies restrict Lambda permissions
 
-#### Missing Security Features
-- Google OAuth implementation (referenced but not present)
-- Session token validation
-- CSRF protection
-- Rate limiting
-- Input sanitization
+#### OIDC state: itsdangerous vs JWT
+We use **itsdangerous.URLSafeTimedSerializer** for the OIDC `state` parameter (signed, time-limited) rather than JWT. Rationale: itsdangerous is purpose-built for this (dumps/loads with `max_age`), has clear exceptions (BadSignature, SignatureExpired), and keeps the code simple. Using JWT for state would remove one dependency but add more manual payload/options and less specific exceptions. Decision: keep itsdangerous unless we explicitly want to drop that dependency. See also `src/app/oidc.py` module docstring.
+
+#### Remaining / Optional
+- Session expiration (cookie is long-lived; consider Max-Age)
+- CSRF tokens on state-changing API calls
+- Rate limiting; input sanitization
 
 ### Dependencies
 
@@ -177,7 +181,7 @@ sam deploy --profile <profile-name>
 - `LOG_LEVEL`: Logging verbosity
 - `TABLE_NAME`: DynamoDB table name
 - `BUCKET_NAME`: S3 bucket name
-- `GOOGLE_SECRET_ARN`: Secrets Manager ARN (not used)
+- `GOOGLE_SECRET_ARN`: Secrets Manager ARN for Google OIDC config JSON (client_id, client_secret, redirect_uri)
 - `BRIVO_SECRET_ARN`: Secrets Manager ARN for Brivo API key
 
 ### Local Development
@@ -187,7 +191,7 @@ sam deploy --profile <profile-name>
 
 ## Limitations & Known Issues
 
-1. **Authentication**: Cookie-based auth is insecure; Google OAuth not implemented
+1. **Authentication**: Google OIDC is implemented; session cookie has no explicit expiration
 2. **Error Handling**: Minimal error handling and user feedback
 3. **Plate Detection**: Simple confidence threshold; no validation or formatting
 4. **Brivo Integration**: Hardcoded test case (`ABC1234`) in manual entry

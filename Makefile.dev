@@ -12,8 +12,6 @@
 
 
 # Things you might want to change go here:
-LOCAL_BUCKET ?= s3bucket
-LOCAL_HTTP_PORT ?= 8080
 LOG_LEVEL ?= DEBUG		# default to debug unless changed
 PYLINT_THRESHOLD ?= 10.0
 STATIC_DIR ?= src/app/static
@@ -23,10 +21,13 @@ TEMPLATES_DIR ?= src/app/templates
 ifeq ($(AWS_REGION),)
     $(warning AWS_REGION is not set. Defaulting to local MinIO/DynamoDB configuration.)
     export AWS_REGION                ?= local
-    export AWS_ACCESS_KEY_ID         ?= minioadmin
-    export AWS_SECRET_ACCESS_KEY     ?= minioadmin
-    export AWS_ENDPOINT_URL_DYNAMODB ?= http://localhost:8010/
-    export AWS_ENDPOINT_URL_S3       ?= http://localhost:9100/
+endif
+ifeq ($(AWS_REGION),local)
+    export AWS_ACCESS_KEY_ID         := minioadmin
+    export AWS_SECRET_ACCESS_KEY     := minioadmin
+    export AWS_ENDPOINT_URL_DYNAMODB := http://localhost:8000/
+    export AWS_ENDPOINT_URL_S3       := http://localhost:9000/
+    export TEST_BUCKET               := test-bucket
 endif
 
 PYR := .venv/pyvenv.cfg
@@ -34,10 +35,16 @@ DYR := bin/DynamoDBLocal.jar
 SYR := bin/minio
 TS_FILES := $(wildcard *.ts */*.ts)
 JS_FILES := $(TS_FILES:.ts=.js)
-DYNAMODB_LOCAL_DOWNLOAD_URL:=https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_latest.zip
 
-# PT_VARS are required for any command that uses planttracer but with dynamically-generated prefixes
-PT_VARS := $(AWS_VARS) PLANTTRACER_S3_BUCKET=$(LOCAL_BUCKET)
+# If we are running in GitHub, we have layers for minio and dynamodb
+# If we are running locally, we need to download them
+
+DYNAMODB_LOCAL_DOWNLOAD_URL:=https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_latest.zip
+MINIO_LINUX_BASE=https://dl.min.io/server/minio/release/linux-amd64
+MINIO_LINUX_BASE_MC=https://dl.min.io/client/mc/release/linux-amd64/
+MINIO_LINUX_ARM_BASE=https://dl.min.io/server/minio/release/linux-arm64
+MINIO_LINUX_ARM_BASE_MC=https://dl.min.io/client/mc/release/linux-arm64/
+MINIO_MACOS_BASE=https://dl.min.io/server/minio/release/darwin-arm64
 
 ################################################################
 # Main targets used by CI/CD system and developers
@@ -60,6 +67,7 @@ check:
 lint:
 	make pylint
 	make eslint
+	make sam-lint
 
 coverage:
 	make pytest-coverage
@@ -79,6 +87,11 @@ distclean:
 	/bin/rm -rf _build
 
 install: $(PYR)
+
+## Lock and install all dependencies (including OIDC: requests, PyJWT, itsdangerous, cryptography). Run after adding deps.
+install-deps:
+	poetry lock
+	poetry install --with dev
 
 $(PYR):
 	poetry install
@@ -128,6 +141,9 @@ flake: $(PYR)
 ## set LOG_LEVEL at start of CLI to change the  log level
 
 pytest: $(PYR)
+	poetry --version
+	poetry run python --version
+	printenv | grep AWS
 	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests
 
 
@@ -170,7 +186,7 @@ run-local-api:
 ### JavaScript
 
 eslint:
-	@if command -v eslint >/dev/null 2>&1; then \
+	if command -v eslint >/dev/null 2>&1; then \
 		JS_FILES=""; \
 		if [ -d $(STATIC_DIR) ]; then \
 			for f in $(STATIC_DIR)/*.js; do \
@@ -215,18 +231,7 @@ jstest-debug:
 # DynamoDBLocal
 # Installations are used by the CI pipeline and by local developers
 # See https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html for info about DynamoDB (local version)
-.PHONY: start_local_dynamodb stop_local_dynamodb list-tables ensure-local-services
-
-ensure-local-services:
-	@# Ensure DynamoDB Local is running and tables exist
-	@if [ "$(AWS_REGION)" = "local" ]; then \
-		echo "Ensuring local services are ready..."; \
-		make create-tables || true; \
-		make make-local-bucket; \
-		echo "Local services ready."; \
-	fi
-
-# installation:
+# installation and start/stop:
 bin/dynamodb_local_latest.zip:
 	mkdir -p bin
 	test -f bin/dynamodb_local_latest.zip || curl $(DYNAMODB_LOCAL_DOWNLOAD_URL) -o bin/dynamodb_local_latest.zip
@@ -242,6 +247,54 @@ start_local_dynamodb: bin/DynamoDBLocal.jar
 
 stop_local_dynamodb:  bin/DynamoDBLocal.jar
 	bash bin/local_dynamodb_control.bash stop
+.PHONY: start_local_dynamodb stop_local_dynamodb
+################################################################
+
+################################################################
+# Minio (S3 clone -- see: https://min.io/)
+# Installations are used by the CI pipeline and by local developers
+
+bin/minio:
+	@echo downloading and installing minio
+	mkdir -p bin
+	uname -a
+	if [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "amd64" ] ; then \
+		echo Linux amd64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "x86_64" ] ; then \
+		echo Linux x86_64 ; curl $(MINIO_LINUX_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "aarch64" ] ; then \
+		echo Linux aarch64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "arm64" ] ; then \
+		echo Linux arm64 ; curl $(MINIO_LINUX_ARM_BASE)/minio -o bin/minio ; curl $(MINIO_LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
+	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MINIO_MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
+	else \
+		echo unknown os/architecture; exit 1; \
+	fi
+	chmod +x bin/minio
+	ls -l bin/minio
+	if [ "$$(uname -s)" = "Linux" ] ; then \
+		chmod +x bin/mc ; \
+		ls -l bin/mc ; \
+	fi
+
+start_local_minio: bin/minio
+	bash bin/local_minio_control.bash start
+
+stop_local_minio:  bin/minio
+	bash bin/local_minio_control.bash stop
+.PHONY: start_local_minio stop_local_minio
+###############################################################
+## S3/DynamoDB controls
+
+.PHONY: ensure-local-services create-tables delete-tables list-tables
+ensure-local-services:
+	@# Ensure DynamoDB Local is running and tables exist
+	@if [ "$(AWS_REGION)" = "local" ]; then \
+		echo "Ensuring local services are ready..."; \
+		make create-tables || true; \
+		make make-local-bucket; \
+		echo "Local services ready."; \
+	fi
 
 create-tables:
 ifeq ($(AWS_REGION),local)
@@ -275,76 +328,43 @@ endif
 list-tables:
 	aws dynamodb list-tables
 
-################################################################
-# Minio (S3 clone -- see: https://min.io/)
-# Installations are used by the CI pipeline and by local developers
-
-# Sources:
-LINUX_BASE=https://dl.min.io/server/minio/release/linux-amd64
-LINUX_BASE_MC=https://dl.min.io/client/mc/release/linux-amd64/
-LINUX_ARM_BASE=https://dl.min.io/server/minio/release/linux-arm64
-LINUX_ARM_BASE_MC=https://dl.min.io/client/mc/release/linux-arm64/
-MACOS_BASE=https://dl.min.io/server/minio/release/darwin-arm64
-bin/minio:
-	@echo downloading and installing minio
-	mkdir -p bin
-	uname -a
-	if [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "amd64" ] ; then \
-		echo Linux amd64 ; curl $(LINUX_BASE)/minio -o bin/minio ; curl $(LINUX_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "x86_64" ] ; then \
-		echo Linux x86_64 ; curl $(LINUX_BASE)/minio -o bin/minio ; curl $(LINUX_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "aarch64" ] ; then \
-		echo Linux aarch64 ; curl $(LINUX_ARM_BASE)/minio -o bin/minio ; curl $(LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Linux" ] && [ "$$(uname -m)" = "arm64" ] ; then \
-		echo Linux arm64 ; curl $(LINUX_ARM_BASE)/minio -o bin/minio ; curl $(LINUX_ARM_BASE_MC)/mc -o bin/mc ; \
-	elif [ "$$(uname -s)" = "Darwin" ] ; then echo Darwin ; curl $(MACOS_BASE)/minio -o bin/minio ; brew install minio/stable/mc ; \
-	else \
-		echo unknown os/architecture; exit 1; \
-	fi
-	chmod +x bin/minio
-	ls -l bin/minio
-	if [ "$$(uname -s)" = "Linux" ] ; then \
-		chmod +x bin/mc ; \
-		ls -l bin/mc ; \
-	fi
-
-start_local_minio: bin/minio
-	bash bin/local_minio_control.bash start
-
-stop_local_minio:  bin/minio
-	bash bin/local_minio_control.bash stop
-
-list-local-buckets:
-	$(AWS_VARS) aws s3 ls
-
 make-local-bucket:
-	@BUCKET_NAME=$${BUCKET_NAME:-$(LOCAL_BUCKET)}; \
+	@BUCKET_NAME=$${BUCKET_NAME:-$(TEST_BUCKET)}; \
 	if [ -z "$$BUCKET_NAME" ]; then \
-		echo "Warning: BUCKET_NAME not set, using default $(LOCAL_BUCKET)"; \
-		BUCKET_NAME=$(LOCAL_BUCKET); \
+		echo "Warning: BUCKET_NAME not set, using default $(TEST_BUCKET)"; \
+		BUCKET_NAME=$(TEST_BUCKET); \
 	fi; \
-	if $(AWS_VARS) aws s3 ls s3://$$BUCKET_NAME/ >/dev/null 2>&1; then \
+	if aws s3 ls s3://$$BUCKET_NAME/ >/dev/null 2>&1; then \
 	 	echo "Bucket $$BUCKET_NAME exists"; \
 	else \
 		echo "Creating bucket s3://$$BUCKET_NAME/"; \
-		$(AWS_VARS) aws s3 mb s3://$$BUCKET_NAME/ 2>&1 || echo "Failed to create bucket $$BUCKET_NAME (may already exist)"; \
+		aws s3 mb s3://$$BUCKET_NAME/ 2>&1 || echo "Failed to create bucket $$BUCKET_NAME (may already exist)"; \
 	fi
 	@echo "Local buckets:"
-	@$(AWS_VARS) aws s3 ls 2>/dev/null || echo "Could not list buckets"
+	@aws s3 ls 2>/dev/null || echo "Could not list buckets"
 
-.PHONY: start_local_minio stop_local_minio list-local-buckets make-local-bucket
+list-local-buckets:
+	aws s3 ls
+
+.PHONY: list-local-buckets make-local-bucket
+
 
 ################################################################
 ### build and deploy
-build:
-	poetry run pylint src/
+### cfn-lint makes an error if AWS_REGION is local...
+sam-lint:
+	AWS_REGION=us-east-1 poetry run cfn-lint template.yaml
+	sam validate --lint
+
+sam-build:
+	make lint
 	poetry export -f requirements.txt --output src/requirements.txt --without-hashes
 	sam build
 
-deploy: build
+sam-deploy: build
 	sam deploy
 
-deploy-guided: build
+sam-deploy-guided: build
 	sam deploy --guided
 
 list-domains:

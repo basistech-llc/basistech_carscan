@@ -1,3 +1,5 @@
+/* style.css */
+
 * { box-sizing: border-box; }
 body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: #f4f4f9; }
 .app-container { max-width: 600px; margin: 0 auto; background: #fff; min-height: 100vh; display: flex; flex-direction: column; }
@@ -37,3 +39,55 @@ input, select { padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-
 #history-list li { padding: 12px; border-bottom: 1px solid #eee; }
 .h-main { display: flex; justify-content: space-between; font-weight: bold; }
 .h-sub { font-size: 0.85em; color: #666; margin-top: 4px; }
+
+/* Landing page (sign-in) */
+.landing-box {
+    max-width: 360px;
+    margin: 2rem auto;
+    padding: 2rem;
+    text-align: center;
+}
+.landing-box h1 { margin-bottom: 0.5rem; }
+.landing-box p { color: #555; margin-bottom: 1.5rem; }
+.btn-google {
+    display: inline-block;
+    padding: 12px 24px;
+    background: #fff;
+    color: #333;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.btn-google:hover {
+    background: #f8f9fa;
+    border-color: #dadce0;
+}
+
+/* Camera page: logged-in user footer */
+.user-footer {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 12px 15px;
+    background: #fff;
+    border-top: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+}
+.user-email { color: #555; }
+.btn-logout {
+    padding: 8px 16px;
+    background: #e2e6ea;
+    color: #333;
+    border: none;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 500;
+    cursor: pointer;
+}
+.btn-logout:hover { background: #d0d4d8; }

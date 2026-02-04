@@ -12,49 +12,14 @@ from aws_lambda_powertools.event_handler.router import Router
 from . import brivo
 
 logger = Logger(child=True)
-router = Router()  # pylint: disable=not-callable
+router = Router()                  # pylint: disable=not-callable
+s3_client = boto3.client("s3")
 
-# Initialize AWS clients
-# Use local endpoints if AWS_REGION is "local"
-_aws_region = os.environ.get("AWS_REGION", "")
-_use_local = _aws_region == "local"
+print("********** AWS REGION:",os.getenv('AWS_REGION'))
+print("********** AWS DYNAMODB:",os.getenv('AWS_ENDPOINT_URL_DYNAMODB'))
 
-_s3_config = {}
-_dynamodb_config = {}
-if _use_local:
-    _s3_endpoint = os.environ.get("AWS_ENDPOINT_URL_S3", "http://localhost:9100/")
-    _dynamodb_endpoint = os.environ.get("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8010/")
-    if _s3_endpoint:
-        _s3_config["endpoint_url"] = _s3_endpoint
-    if _dynamodb_endpoint:
-        _dynamodb_config["endpoint_url"] = _dynamodb_endpoint
-
-s3_client = boto3.client("s3", **_s3_config)
-rekognition = boto3.client("rekognition")
-dynamodb = boto3.resource("dynamodb", **_dynamodb_config)
-
-
-def _get_table():
-    """Get the DynamoDB table, reading table name from environment dynamically."""
-    table_name = os.environ.get("TABLE_NAME", "test-table")
-    return dynamodb.Table(table_name)
-
-
-# Lazy table accessor - reads table name from environment each time it's accessed
-class _LazyTable:
-    """Lazy table accessor that reads table name from environment each time."""
-
-    def __getattr__(self, name):
-        # Delegate all attribute access to the dynamically-created table
-        return getattr(_get_table(), name)
-
-    def __call__(self, *args, **kwargs):
-        # Handle if table is called as a function (shouldn't happen, but be safe)
-        return _get_table()(*args, **kwargs)
-
-
-table = _LazyTable()
-
+dynamodb  = boto3.resource("dynamodb", region_name=os.getenv('AWS_REGION'))
+table     = dynamodb.Table(os.getenv("TABLE_NAME","cala-garage-scans"))
 
 # --- API Routes ---
 
@@ -94,7 +59,7 @@ def get_scan_status(job_id: str) -> Dict[str, Any]:
     """Polled by the frontend to check if LPR is complete."""
     user = router.context.get("user_email")
 
-    response = _get_table().get_item(
+    response = table.get_item(
         Key={
             "user_email": user,
             "sk": f"job#{job_id}",
@@ -116,7 +81,7 @@ def get_user_history() -> list:
         # If context not set, this is an error - middleware should have caught this
         # But if it somehow got through, return empty list
         return []
-    resp = _get_table().query(
+    resp = table.query(
         KeyConditionExpression=Key("user_email").eq(user),
         ScanIndexForward=False,
         Limit=50,
@@ -134,24 +99,25 @@ def manual_entry() -> Dict[str, Any]:
     body = router.current_event.json_body
 
     plate = body.get("plate", "").upper()
-    state = body.get("state", "MA")
 
     # Generate a unique job_id for manual entries
     job_id = f"manual/{int(time.time())}"
 
     # Perform Brivo Lookup (currently stubbed)
-    result_name = brivo.brivo_lookup(plate, state)
+    u = brivo.brivo_lookup(plate)
 
     item = {
         "user_email": user,
         "sk": f"job#{job_id}",
         "plate": plate,
-        "state": state,
-        "result": result_name,
+        "result": u,
         "timestamp": int(time.time()),
         "image_key": "manual",
     }
-    _get_table().put_item(Item=item)
+    try:
+        table.put_item(Item=item)
+    except Exception as e:         # pylint: disable=broad-exception-caught
+        logger.error("Exception: %s",e)
 
     return {"status": "complete", "data": item}
 
@@ -174,23 +140,19 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         state = head["Metadata"].get("state", "MA")
 
         # 2. Perform LPR via Rekognition
-        rek_resp = rekognition.detect_text(
-            Image={"S3Object": {"Bucket": bucket, "Name": key}}
-        )
-        plate = next(
-            (
-                t["DetectedText"]
-                for t in rek_resp["TextDetections"]
-                if t["Confidence"] > 90
-            ),
-            "NOT_FOUND",
-        )
+        if os.environ.get('AWS_REGION','')!='local':
+            rekognition = boto3.client("rekognition")
+            rek_resp = rekognition.detect_text( Image={"S3Object": {"Bucket": bucket, "Name": key}} )
+            plate = next( ( t["DetectedText"] for t in rek_resp["TextDetections"] if t["Confidence"] > 90 ),
+                          "NOT_FOUND")
 
-        # 3. Lookup Brivo (currently stubbed)
-        result_name = brivo.brivo_lookup(plate, state)
+            result_name = brivo.brivo_lookup(plate)
+        else:
+            result_name = None
+            plate = "n/a"
 
         # 4. Save record for frontend polling and history
-        _get_table().put_item(
+        table.put_item(
             Item={
                 "user_email": user,
                 "sk": f"job#{key}",
@@ -205,4 +167,3 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
 
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Background processing failed for %s: %s", key, exc)
-

@@ -9,76 +9,69 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+    env:
+      AWS_REGION: local
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+
     steps:
-    - uses: actions/checkout@v4
-    
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Start MinIO (Official Image)
+      run: |
+        docker run -d \
+          -p 9000:9000 \
+          -p 9001:9001 \
+          --name minio \
+          -e "MINIO_ROOT_USER=minioadmin" \
+          -e "MINIO_ROOT_PASSWORD=minioadmin" \
+          minio/minio server /data --console-address ":9001"
+
+    - name: Wait for minio and localDynamoDB
+      run: |
+        bin/local_dynamodb_control.bash wait
+        bin/local_minio_control.bash wait
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.13'
-    
+
     - name: Install Poetry via pipx (official method)
       run: |
         python -m pip install --upgrade pip
         python -m pip install pipx
         python -m pipx ensurepath
         pipx install poetry
-    - name: Configure Poetry
-      run: |
         poetry config virtualenvs.create true
         poetry config virtualenvs.in-project true
-    
-    - name: Install Python dependencies
-      run: poetry install
-    
-    - name: Install Java (for DynamoDB Local)
-      uses: actions/setup-java@v4
+
+    - name: Cache Poetry virtualenv
+      uses: actions/cache@v4
       with:
-        distribution: 'temurin'
-        java-version: '21'
-    
-    - name: Install AWS CLI
+        path: .venv
+        key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+
+    - name: Install Python and JavaScript dependencies
       run: |
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install
-    
-    - name: Install DynamoDB Local
-      run: make bin/DynamoDBLocal.jar
-    
-    - name: Install MinIO
-      run: make bin/minio
-    
-    - name: Start DynamoDB Local and MinIO
-      run: |
-        export AWS_REGION=local
-        export AWS_ENDPOINT_URL_DYNAMODB=http://localhost:8010/
-        export AWS_ENDPOINT_URL_S3=http://localhost:9100/
-        export AWS_ACCESS_KEY_ID=minioadmin
-        export AWS_SECRET_ACCESS_KEY=minioadmin
-        export LOCAL_BUCKET=test-bucket
-        make start_local_dynamodb
-        sleep 5
-        make start_local_minio
-        sleep 5
-        make make-local-bucket
-    
+        poetry install
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: 'package-lock.json'
+
+    - name: Install Dependencies
+      run: npm ci
+
     - name: Run full test suite
-      run: make check
-      env:
-        AWS_REGION: local
-        AWS_ENDPOINT_URL_DYNAMODB: http://localhost:8010/
-        AWS_ENDPOINT_URL_S3: http://localhost:9100/
-        AWS_ACCESS_KEY_ID: minioadmin
-        AWS_SECRET_ACCESS_KEY: minioadmin
-        LOCAL_BUCKET: test-bucket
-        TABLE_NAME: cala-garage-scans
-        BUCKET_NAME: test-bucket
-        LOG_LEVEL: DEBUG
-    
-    - name: Stop services
-      if: always()
       run: |
-        make stop_local_dynamodb || true
-        make stop_local_minio || true
+        make check
