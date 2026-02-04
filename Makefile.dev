@@ -132,6 +132,8 @@ flake: $(PYR)
 ## set LOG_LEVEL at start of CLI to change the  log level
 
 pytest: $(PYR)
+	poetry --version
+	poetry run python --version
 	printenv | grep AWS
 	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests
 
