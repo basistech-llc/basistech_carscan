@@ -2,6 +2,10 @@ const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const UPLOAD_TIMEOUT_SECONDS = 10;
 
+// Abort/cancel support: when [live] is clicked, we stop upload and polling
+let uploadAbortController = null;
+let pollIntervalId = null;
+
 // Get current API base path (e.g. /Prod/ or /Staging/) from window location
 const API_BASE = window.location.pathname.endsWith('/')
       ? window.location.pathname
@@ -46,43 +50,131 @@ function showTab(tabName) {
 async function post_image(image) {
   showResult("Processing...", "", null);
 
+  // Abort any previous upload
+  if (uploadAbortController) uploadAbortController.abort();
+  uploadAbortController = new AbortController();
+  const signal = uploadAbortController.signal;
+
   // 1. Get Presigned URL
-  fetch('api/upload-url', {method:"GET"})
+  fetch('api/upload-url', { method: "GET", signal })
     .then(r => {
       if (r.status === 401) window.location.reload(); // Auth check
       if (!r.ok) {
-        console.log("r:",r);
+        console.log("r:", r);
         showResult("Failed");
         throw new Error(`Failed to get signed upload URL: ${r}`);
       }
       return r.json();
     })
-    .then( obj => {
-      console.log("obj:",obj);
+    .then(obj => {
+      if (signal.aborted) return;
+      console.log("obj:", obj);
       // 2. Now use the presigned_post to upload to s3
       const formData = new FormData();
       for (const field in obj.presigned.fields) {
         formData.append(field, obj.presigned.fields[field]);
       }
       formData.append('file', image); // must be last
-      console.log("formData:",formData);
-      const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), UPLOAD_TIMEOUT_SECONDS * 1000);
-      fetch(obj.presigned.url, { method: 'POST', body: formData , signal: ctrl.signal});
-      pollForResult(obj.job_id); // scan for results
+      console.log("formData:", formData);
+      const timeoutId = setTimeout(() => uploadAbortController?.abort(), UPLOAD_TIMEOUT_SECONDS * 1000);
+      return fetch(obj.presigned.url, { method: 'POST', body: formData, signal })
+        .then(() => { clearTimeout(timeoutId); return obj.job_id; })
+        .catch(e => { clearTimeout(timeoutId); throw e; });
+    })
+    .then(jobId => {
+      if (signal.aborted || !jobId) return;
+      pollForResult(jobId);
+    })
+    .catch(err => {
+      if (err?.name === 'AbortError') return; // user went live, ignore
+      console.error("Upload error", err);
+      showResult("Failed", "", false);
     });
 }
 
 
+/**
+ * Draw 12pt yellow sans-serif date/time at bottom of canvas
+ */
+function addTimestampToCanvas(ctx, w, h) {
+  const now = new Date();
+  const text = now.toLocaleString();
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'yellow';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(text, 8, h - 8);
+}
+
 // Used in HTML: onclick="captureAndScan()"
 // eslint-disable-next-line no-unused-vars
 async function captureAndScan() {
+  // Capture frame while video is live, add timestamp
   const context = canvas.getContext('2d');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  addTimestampToCanvas(context, canvas.width, canvas.height);
+
+  // Stop video stream
+  const stream = video.srcObject;
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+  }
+
+  // Show captured image, hide live video
+  video.style.display = 'none';
+  canvas.style.display = 'block';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.objectFit = 'cover';
+
+  // Change button to [live]
+  const btn = document.getElementById('scan-btn');
+  btn.textContent = '[live]';
+  btn.onclick = goLive;
+
   canvas.toBlob(post_image, "image/jpeg", 0.95);
 }
+
+// Used when [live] button is clicked: cancel upload, resume video
+// eslint-disable-next-line no-unused-vars
+function goLive() {
+  // Abort in-progress upload and stop polling
+  if (uploadAbortController) {
+    uploadAbortController.abort();
+    uploadAbortController = null;
+  }
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+
+  // Show video, hide canvas
+  video.style.display = '';
+  canvas.style.display = 'none';
+
+  // Change button to [scan]
+  const btn = document.getElementById('scan-btn');
+  btn.textContent = '[scan]';
+  btn.onclick = captureAndScan;
+
+  // Restart camera
+  initCamera();
+}
+
+// Photo library: hidden file input is triggered by the [upload photo from library] button
+(function setupLibraryUpload() {
+  const input = document.getElementById('library-input');
+  if (!input) return;
+  input.addEventListener('change', function () {
+    const file = input.files && input.files[0];
+    if (file && file.type.startsWith('image/')) {
+      post_image(file);
+    }
+    input.value = '';
+  });
+})();
 
 // Used in HTML: onclick="manualSearch()"
 // eslint-disable-next-line no-unused-vars
@@ -125,15 +217,19 @@ async function manualSearch() {
  * Called from captureAndScan() after image upload
  */
 async function pollForResult(jobId) {
+  if (pollIntervalId) clearInterval(pollIntervalId);
+  pollIntervalId = null;
+
   showResult("Processing...", "Analyzing Image...", null);
   const poll = setInterval(async () => {
+    if (pollIntervalId === null) return; // cleared by goLive
     try {
-      // job_id contains slashes, must be encoded
-      const statusRes = await apiCall(`api/status/${encodeURIComponent(jobId)}`);
+      const statusRes = await apiCall(`api/status?job_id=${encodeURIComponent(jobId)}`);
       const statusData = await statusRes.json();
 
       if (statusData.status === 'complete') {
         clearInterval(poll);
+        pollIntervalId = null;
         const data = statusData.data;
         const found = data.result !== "Unknown" && data.plate !== "NOT_FOUND";
         showResult(data.result, `${data.plate} (${data.state})`, found);
@@ -142,11 +238,15 @@ async function pollForResult(jobId) {
       console.error("Polling error", e);
     }
   }, 1000);
+  pollIntervalId = poll;
 
   // Timeout after 10 seconds
   setTimeout(() => {
-    clearInterval(poll);
-    showResult("Failed", "Enter plate manually.", false);
+    if (pollIntervalId === poll) {
+      clearInterval(poll);
+      pollIntervalId = null;
+      showResult("Failed", "Enter plate manually.", false);
+    }
   }, 10000);
 }
 
