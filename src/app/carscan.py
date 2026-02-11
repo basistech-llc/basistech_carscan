@@ -76,8 +76,10 @@ def canonicalize_brivo_plates(obj_array):
     return out
 
 def get_all_plates():
-    all_plates =  table.get_item( Key={'user_email':'plates', 'sk':'plates'})['Item']
-    return canonicalize_brivo_plates( all_plates )
+    item = table.get_item(Key={'user_email': 'plates', 'sk': 'plates'}).get('Item')
+    if not item or 'plates' not in item:
+        return []
+    return canonicalize_brivo_plates(item['plates'])
 # --- API Routes ---
 
 @router.get("/upload-url")

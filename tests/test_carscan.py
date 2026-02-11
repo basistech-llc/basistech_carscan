@@ -171,7 +171,7 @@ def test_canonicalize_brivo_plates():
 
 def test_all_plates_api_mocked(api_event):
     """GET /api/all-plates returns mocked data from data/plates_fake.json (no DynamoDB)."""
-    from unittest.mock import patch
+    from unittest.mock import patch # pylint: disable=import-outside-toplevel
 
     plates = json.loads(PLATES_FAKE.read_text())
     fake = carscan.canonicalize_brivo_plates(plates)
