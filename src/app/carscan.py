@@ -56,11 +56,13 @@ def canonicalize_brivo_plates(obj_array):
     """Given the database of brivo plates, transform into an array of objects with 'plate' and 'name'"""
     out = []
     for obj in obj_array:
-        work = RE_PARENS.sub("", obj['plate'])
-        work = work.replace(" ","")
+        work = RE_PARENS.sub("", obj.get('plate', '') or '')
+        work = work.replace(" ", "")
+        if not work:
+            continue
         if "," in work:
             plates = work.split(",")
-        if "&" in work:
+        elif "&" in work:
             plates = work.split("&")
         elif "-" in work:
             # the "-" might be in a single plate or it might separate two plates.
@@ -73,7 +75,10 @@ def canonicalize_brivo_plates(obj_array):
         else:
             plates = [work]
         for plate in plates:
-            out.append({'plate':plate, 'name':obj['firstName'] + ' ' + obj['lastName']})
+            p = plate.strip()
+            if not p:
+                continue
+            out.append({'plate': p, 'name': obj['firstName'] + ' ' + obj['lastName']})
     out.sort(key=lambda a:a['plate'])
     return out
 

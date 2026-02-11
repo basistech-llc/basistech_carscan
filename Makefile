@@ -48,7 +48,7 @@ dump-scans:
 
 store-and-write-plates:
 	aws sts get-caller-identity # make sure we are still active
-	poetry run python  -m src.app.carscan --store-plates --store-file plates.json
+	poetry run python  -m src.app.carscan --store-plates --store-file all_plates.json
 
 ################################################################
 
