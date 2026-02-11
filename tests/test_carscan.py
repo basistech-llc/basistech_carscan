@@ -167,3 +167,25 @@ def test_canonicalize_brivo_plates():
     cplates = carscan.canonicalize_brivo_plates(plates)
     assert len(plates) <= len(cplates)
     assert all( ( len(cplate['plate']) in [6,7] for cplate in cplates ) )
+
+
+def test_all_plates_api_mocked(api_event):
+    """GET /api/all-plates returns mocked data from data/plates_fake.json (no DynamoDB)."""
+    from unittest.mock import patch
+
+    plates = json.loads(PLATES_FAKE.read_text())
+    fake = carscan.canonicalize_brivo_plates(plates)
+    with patch.object(carscan, "get_all_plates", return_value=fake):
+        ev = _http_event("GET", "/api/all-plates")
+        ev["headers"] = api_event["headers"]
+        ev["routeKey"] = "GET /api/all-plates"
+        ev["rawPath"] = "/api/all-plates"
+        ev["requestContext"]["routeKey"] = "GET /api/all-plates"
+        ev["requestContext"]["http"]["method"] = "GET"
+        ev["requestContext"]["http"]["path"] = "/api/all-plates"
+        response = lambda_handler(ev, {})
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert isinstance(body, list)
+    assert len(body) > 0
+    assert all("plate" in row and "name" in row for row in body)

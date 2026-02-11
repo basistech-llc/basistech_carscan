@@ -93,3 +93,11 @@ input, select { padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-
     cursor: pointer;
 }
 .btn-logout:hover { background: #d0d4d8; }
+
+/* All-plates tab: fixed header, scrollable body */
+.all-plates-search { width: 100%; margin-bottom: 10px; padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
+.all-plates-table-wrapper { overflow-y: auto; max-height: 50vh; border: 1px solid #ccc; border-radius: 8px; }
+.all-plates-table { width: 100%; border-collapse: collapse; }
+.all-plates-table th, .all-plates-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
+.all-plates-table thead { position: sticky; top: 0; background: #fff; z-index: 1; box-shadow: 0 2px 0 0 #ccc; }
+.all-plates-table th { font-weight: 600; color: #333; }

@@ -12,6 +12,7 @@
         <div class="tabs">
             <button onclick="showTab('scan')" class="active">Scanner</button>
             <button onclick="showTab('history')">My History</button>
+            <button onclick="showTab('all')">All</button>
         </div>
 
         <div id="scan-tab" class="tab-content active">
@@ -41,6 +42,21 @@
         <div id="history-tab" class="tab-content">
             <button onclick="loadHistory()" style="margin-bottom:10px;">Refresh</button>
             <ul id="history-list"></ul>
+        </div>
+
+        <div id="all-tab" class="tab-content">
+            <input type="text" id="all-plates-search" placeholder="Search plates or names..." class="all-plates-search">
+            <div class="all-plates-table-wrapper">
+                <table class="all-plates-table">
+                    <thead>
+                        <tr>
+                            <th>plate</th>
+                            <th>name</th>
+                        </tr>
+                    </thead>
+                    <tbody id="all-plates-body"></tbody>
+                </table>
+            </div>
         </div>
     </div>
     <footer class="user-footer">

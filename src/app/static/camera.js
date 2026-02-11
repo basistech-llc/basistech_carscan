@@ -38,13 +38,20 @@ async function initCamera() {
   }
 }
 
+// All-plates data: pre-loaded on page load, filtered by search
+let allPlatesData = [];
+
 // Discount HTML tab selection
 // Used in HTML: onclick="showTab('scan')"
 // eslint-disable-next-line no-unused-vars
 function showTab(tabName) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tabs button').forEach(btn => btn.classList.remove('active'));
   document.getElementById(`${tabName}-tab`).classList.add('active');
+  const activeBtn = document.querySelector(`.tabs button[onclick="showTab('${tabName}')"]`);
+  if (activeBtn) activeBtn.classList.add('active');
   if (tabName === 'history') loadHistory();
+  if (tabName === 'all') renderAllPlatesTable();
 }
 
 async function post_image(image) {
@@ -207,13 +214,6 @@ async function manualSearch() {
     showResult("Error", "Could not save manual entry", false);
   }
 }
-document.addEventListener('DOMContentLoaded', () => {
-  const manualBtn = document.getElementById('manual-plate-button');
-  if (manualBtn) {
-    manualBtn.addEventListener('click', manualSearch);
-  }
-});
-
 
 /**
  * Polling loop to check DynamoDB status
@@ -290,5 +290,56 @@ async function loadHistory() {
         </li>
     `).join('');
 }
+
+/**
+ * Pre-load all plates from API (background, on page load)
+ */
+async function loadAllPlates() {
+  try {
+    const res = await apiCall('api/all-plates');
+    if (res.status === 401) return;
+    if (res.ok) {
+      allPlatesData = await res.json();
+    }
+  } catch (e) {
+    console.error('loadAllPlates failed', e);
+  }
+}
+
+/**
+ * Render the all-plates table with current search filter
+ */
+function renderAllPlatesTable() {
+  const query = (document.getElementById('all-plates-search')?.value || '').toLowerCase();
+  const filtered = query
+    ? allPlatesData.filter(row =>
+        (row.plate || '').toLowerCase().includes(query) ||
+        (row.name || '').toLowerCase().includes(query)
+      )
+    : allPlatesData;
+  const tbody = document.getElementById('all-plates-body');
+  if (!tbody) return;
+  tbody.innerHTML = filtered.map(row =>
+    `<tr><td>${escapeHtml(row.plate || '')}</td><td>${escapeHtml(row.name || '')}</td></tr>`
+  ).join('');
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const manualBtn = document.getElementById('manual-plate-button');
+  if (manualBtn) {
+    manualBtn.addEventListener('click', manualSearch);
+  }
+  loadAllPlates();
+  const searchInput = document.getElementById('all-plates-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', renderAllPlatesTable);
+  }
+});
 
 initCamera();

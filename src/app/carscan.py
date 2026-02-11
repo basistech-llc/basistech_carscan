@@ -75,11 +75,9 @@ def canonicalize_brivo_plates(obj_array):
     out.sort(key=lambda a:a['plate'])
     return out
 
-
-
 def get_all_plates():
-    return table.get_item( Key={'user_email':'plates', 'sk':'plates'})['Item']
-
+    all_plates =  table.get_item( Key={'user_email':'plates', 'sk':'plates'})['Item']
+    return canonicalize_brivo_plates( all_plates )
 # --- API Routes ---
 
 @router.get("/upload-url")
@@ -147,6 +145,15 @@ def get_user_history() -> list:
                         ScanIndexForward=False,
                         Limit=50 )
     return resp.get("Items", [])
+
+
+@router.get("/all-plates")
+def get_all_plates_api() -> list:
+    """Return all plates from the Brivo database as [{plate, name}, ...]. Authenticated."""
+    user = router.context.get("user_email")
+    if not user:
+        raise ValueError("user_email not found in context - authentication failed")
+    return get_all_plates()
 
 
 @router.post("/manual")
