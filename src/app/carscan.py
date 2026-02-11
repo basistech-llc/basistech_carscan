@@ -60,6 +60,8 @@ def canonicalize_brivo_plates(obj_array):
         work = work.replace(" ","")
         if "," in work:
             plates = work.split(",")
+        if "&" in work:
+            plates = work.split("&")
         elif "-" in work:
             # the "-" might be in a single plate or it might separate two plates.
             # If everything separated is larger than 4 characters, it is separating two plates
