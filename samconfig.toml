@@ -5,7 +5,7 @@ profile = "basistech"
 stack_name = "carscan"
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM"
-parameter_overrides = "CustomDomainName=\"carscan.basistech.io\" ImageBucketName=\"basistech-carscan-images\" HostedZoneId=\"Z1000045N2FKFAMSDT42\" CertificateArn=\"\" LogLevel=\"DEBUG\" GoogleClientSecretArn=\"arn:aws:secretsmanager:us-east-2:101576635312:secret:google_oidc-OEEw7o\" BrivoApiKeyArn=\"arn:aws:secretsmanager:us-east-2:101576635312:secret:brivo-3t7NoA\" BrivoScanTable=\"brivo-scan-table\" DeploymentTimestamp=\"2026-02-03\""
+parameter_overrides = "CustomDomainName=\"carscan.basistech.io\" ImageBucketName=\"basistech-carscan-images\" HostedZoneId=\"Z1000045N2FKFAMSDT42\" CertificateArn=\"\" LogLevel=\"DEBUG\" GoogleClientSecretArn=\"arn:aws:secretsmanager:us-east-2:101576635312:secret:google_oidc-OEEw7o\" BrivoApiKeyArn=\"arn:aws:secretsmanager:us-east-2:101576635312:secret:brivo-3t7NoA\" BrivoScanTable=\"cala-garage-scans\" DeploymentTimestamp=\"2026-02-03\""
 image_repositories = []
 s3_prefix = "carscan"
 confirm_changeset = false

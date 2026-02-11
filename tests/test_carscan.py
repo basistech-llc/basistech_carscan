@@ -4,14 +4,19 @@ import base64
 import json
 import uuid
 import sys
+from pathlib import Path
+import os
 
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError, BotoCoreError
 
 import conftest as conftest_module
+from app import carscan
 from app.carscan import s3_client, table
-from app.main import COOKIE_SALT as APP_COOKIE_SALT, lambda_handler
+from app.main import COOKIE_SALT as APP_COOKIE_SALT, lambda_handler, logger
 from app.oidc import OIDC_STATE_SALT as APP_OIDC_SALT
 
+PLATES_FAKE = Path(__file__).parent.parent / "data" / "plates_fake.json"
 
 
 def test_conftest_salts_match_app():
@@ -124,10 +129,24 @@ def test_async_s3_handler(s3_event):
     key    = s3_event["detail"]["object"]["key"]
     email = f"test-{str(uuid.uuid4())}@example.com"
 
-    s3_client.put_object( Bucket=bucket,
-                          Key=key,
-                          Body=b"fake image data",
-                          Metadata={"user": email} )
+    try:
+        s3_client.put_object( Bucket=bucket,
+                              Key=key,
+                              Body=b"fake image data",
+                              Metadata={"user": email} )
+    except (ClientError, BotoCoreError):
+        # We use .get() so the logger doesn't crash if a variable is missing
+        env_info = {
+            "AWS_REGION": os.environ.get("AWS_REGION"),
+            "AWS_PROFILE": os.environ.get("AWS_PROFILE"),
+            "AWS_ENDPOINT_URL_S3": os.environ.get("AWS_ENDPOINT_URL_S3"),
+        }
+        logger.error("Region: %s",s3_client.meta.region_name)
+        logger.error("Endpoint: %s",s3_client.meta.endpoint_url)
+        logger.exception(
+            f"AWS S3 PutObject failed. Environment context: {env_info}"
+        )
+        raise
 
     lambda_handler(s3_event, {})
 
@@ -141,3 +160,10 @@ def test_async_s3_handler(s3_event):
         print(f"Scan of {table}",file=sys.stderr)
         r = table.scan()
         print(json.dumps(r,indent=4,default=str),file=sys.stderr)
+
+
+def test_canonicalize_brivo_plates():
+    plates = json.loads(PLATES_FAKE.read_text())
+    cplates = carscan.canonicalize_brivo_plates(plates)
+    assert len(plates) <= len(cplates)
+    assert all( ( len(cplate['plate']) in [6,7] for cplate in cplates ) )

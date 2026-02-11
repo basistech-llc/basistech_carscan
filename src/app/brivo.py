@@ -1,5 +1,4 @@
 import functools
-import sys
 import json
 import base64
 import urllib
@@ -48,7 +47,6 @@ def get_secrets():
 def secret(v):
     return get_secrets()[v]
 
-@functools.lru_cache(maxsize=1)
 def get_token():
     CLIENT_PASSWORD_ID = secret('CLIENT_PASSWORD_ID')
     CLIENT_PASSWORD_SECRET = secret('CLIENT_PASSWORD_SECRET')
@@ -74,29 +72,27 @@ def authenticated_request(method, endpoint, params=None):
     ACCESS_TOKEN = get_token()['access_token']
 
     url = f"{BASE_API}{endpoint}"
-    headers = {
-        'Authorization': f"bearer {ACCESS_TOKEN}",
-        'api-key': API_KEY
-    }
 
     try:
-        if method.lower() == 'get':
-            #print(url,params)
-            r = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
-        else:
-            raise ValueError(method)
+        for _ in range(3):
+            headers = { 'Authorization': f"bearer {ACCESS_TOKEN}", 'api-key': API_KEY }
+            if method.lower() == 'get':
+                r = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
+            else:
+                raise ValueError(method)
 
-        if r.status_code == 401:
-            #print("--> [Auth] Token expired. Refreshing...", file=sys.stderr)
-            headers['Authorization'] = f"bearer {ACCESS_TOKEN}"
-            #print(url,params)
-            r = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
-
-        r.raise_for_status()
-        return r
-
+            if r.ok:
+                return r
+            if r.status_code == 401:
+                logger.info("--> [Auth] Token expired. Refreshing...")
+                ACCESS_TOKEN = get_token()['access_token']
+            else:
+                logger.error("http error: %s %s",r.status_code,r.text)
+                return None
+        logger.error("token failure")
+        return None
     except Exception as e:      # pylint: disable=broad-exception-caught
-        print(f"!! API Error on {url}: {e}", file=sys.stderr)
+        logger.error("API Error on %s %s",url,e)
         return None
 
 
@@ -107,7 +103,8 @@ def get_user_detail(user_id):
 
     r = authenticated_request('GET',f'/users/{user_id}',
                               params = {"expand": "customFields,emails,phoneNumbers,credentials"})
-    r.raise_for_status()
+    if not r.ok:
+        return None
     val = r.json()
     for fields in val.get('customFields',[]):
         val[fields['fieldName']] = fields.get('value')
@@ -172,6 +169,7 @@ def search_users_by_plate_api( plate, *,
     Server-side search: /users?filter=cf_<id>__eq:<plate>
     Brivo documents this cf_<id>__eq syntax. :contentReference[oaicite:2]{index=2}
     """
+    logger.info("search_users_by_plate_api(plate=%s",plate)
     plate = (plate or "").strip()
     if not plate:
         return []
@@ -183,30 +181,44 @@ def search_users_by_plate_api( plate, *,
 
     filter_expr = f"cf_{int(custom_field_id)}__{operator}:{plate}"
 
-    r = authenticated_request("GET", "/users", params={
-        "offset": 0,
-        "pageSize": page_size,
-        "expand": expand,
-        "filter": filter_expr,
-    })
+    r = authenticated_request("GET", "/users", params={ "offset": 0,
+                                                        "pageSize": page_size,
+                                                        "expand": expand,
+                                                        "filter": filter_expr })
     if r is None:
         return []
 
     payload = r.json()
+    logger.debug("payload=%s",payload)
     return payload.get("data", [])
 
 def brivo_lookup(plate: str) -> str:
     """
     Looks up the user by plate. Returns the first match or None
     """
-    logger.debug("Brivo lookup stub called for plate=%s", plate)
     for u in search_users_by_plate_api(plate):
         return get_user_detail(u['id'])
     return None
 
+def dump_all_plates(verbose=False):
+    """
+    Returns an array of JSON objects with .id, .firstName, .lastName, .plate
+    """
+    ret = []
+    for u in get_all_users(expand=True):
+        if u.get(PLATE_FIELD):
+            rec = {'id':u['id'],
+                        'firstName':u['firstName'],
+                        'lastName': u['lastName'],
+                        'plate': u.get(PLATE_FIELD)}
+            ret.append(rec)
+            if verbose:
+                print(rec)
+    return ret
+
 
 def main():
-    parser = argparse.ArgumentParser(description='Upload an image',
+    parser = argparse.ArgumentParser(description='Brivo CLI tester',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--dump",  help='dump all license plates and names', action='store_true')
     parser.add_argument('--plate', help='search for a plate')

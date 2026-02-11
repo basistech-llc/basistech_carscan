@@ -43,6 +43,13 @@ local-s3-event:
 	aws lambda invoke --function-name $(FUNCTION_NAME) --payload file://temp_event.json --endpoint-url http://localhost:3001 out.json
 	@rm temp_event.json
 
+dump-scans:
+	aws dynamodb scan  --table-name cala-garage-scans  | cat
+
+store-and-write-plates:
+	aws sts get-caller-identity # make sure we are still active
+	poetry run python  -m src.app.carscan --store-plates --store-file plates.json
+
 ################################################################
 
 ### startup
@@ -55,3 +62,8 @@ upload-brivo-oidc-secret:
 	aws secretsmanager create-secret \
 	--name brivo \
 	--secret-string file://secrets/brivo_combined_secrets.json
+
+
+login:
+	echo SSO start URL: https://basistech.awsapps.com/start/#
+	echo SSO region: us-east-1

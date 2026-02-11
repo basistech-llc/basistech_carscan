@@ -9,6 +9,10 @@ packages = [
     { include = "app", from = "src" },
 ]
 
+[tool.env]
+AWS_PROFILE = "basistech"
+AWS_REGION = "us-east-2"
+
 [tool.poetry.dependencies]
 python = ">=3.13,<3.14"
 boto3 = "^1.40.71"
@@ -36,6 +40,7 @@ dev = [
     "pytest (>=9.0.2,<10.0.0)",
     "flask (>=3.0.0)",
     "cfn-lint (>=1.43.4,<2.0.0)",
+    "pytest-env (>=1.3.0,<2.0.0)",
 ]
 
 [tool.pylint.MASTER]
@@ -67,6 +72,10 @@ exclude    = ["**/vendor"]
 
 [tool.pytest.ini_options]
 testpaths     = ["tests"]
+env = [
+    "AWS_REGION=local",
+    "TEST_BUCKET=test-bucket"
+]
 
 [tool.black]
 extend-exclude = ["tests"]

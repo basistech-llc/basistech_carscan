@@ -106,7 +106,6 @@ function addTimestampToCanvas(ctx, w, h) {
 }
 
 // Used in HTML: onclick="captureAndScan()"
-// eslint-disable-next-line no-unused-vars
 async function captureAndScan() {
   // Capture frame while video is live, add timestamp
   const context = canvas.getContext('2d');
@@ -138,7 +137,6 @@ async function captureAndScan() {
 }
 
 // Used when [live] button is clicked: cancel upload, resume video
-// eslint-disable-next-line no-unused-vars
 function goLive() {
   // Abort in-progress upload and stop polling
   if (uploadAbortController) {
@@ -177,8 +175,6 @@ function goLive() {
 })();
 
 // Used in HTML: onclick="manualSearch()"
-// eslint-disable-next-line no-unused-vars
-// This seems to work
 async function manualSearch() {
   const text = document.getElementById('manual-plate').value;
   if(!text) return;
@@ -211,6 +207,13 @@ async function manualSearch() {
     showResult("Error", "Could not save manual entry", false);
   }
 }
+document.addEventListener('DOMContentLoaded', () => {
+  const manualBtn = document.getElementById('manual-plate-button');
+  if (manualBtn) {
+    manualBtn.addEventListener('click', manualSearch);
+  }
+});
+
 
 /**
  * Polling loop to check DynamoDB status

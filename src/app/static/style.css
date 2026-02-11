@@ -26,6 +26,8 @@ input, select { padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-
 
 .btn-secondary { background: #e2e6ea; border: none; border-radius: 6px; padding: 0 15px; font-weight: bold; }
 #scan-btn { margin-top: auto; background: #0056b3; color: white; border: none; padding: 18px; font-size: 18px; border-radius: 8px; font-weight: bold; }
+.btn-library { display: block; width: 100%; margin-bottom: 15px; padding: 12px; background: #e2e6ea; border: none; border-radius: 8px; font-size: 16px; font-weight: 500; cursor: pointer; }
+.bottom-spacer { min-height: 80px; }
 
 /* Results */
 .result-box { padding: 20px; text-align: center; border-radius: 8px; background: #eee; margin-top: 10px; }

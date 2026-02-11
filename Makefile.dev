@@ -59,9 +59,10 @@ all:
 	make run-local
 
 check:
-	make ensure-local-services
-	make lint
-	make pytest
+	export AWS_REGION=local && \
+	make ensure-local-services && \
+	make lint && \
+	make pytest && \
 	make jscoverage
 
 lint:
@@ -288,7 +289,8 @@ stop_local_minio:  bin/minio
 
 .PHONY: ensure-local-services create-tables delete-tables list-tables
 ensure-local-services:
-	@# Ensure DynamoDB Local is running and tables exist
+	@echo AWS_REGION=$(AWS_REGION)
+	@echo Ensure DynamoDB Local is running and tables exist
 	@if [ "$(AWS_REGION)" = "local" ]; then \
 		echo "Ensuring local services are ready..."; \
 		make create-tables || true; \
@@ -365,11 +367,14 @@ sam-build:
 	poetry export -f requirements.txt --output src/requirements.txt --without-hashes
 	sam build
 
-sam-deploy:
+sam-deploy: sam-build
 	printenv | grep AWS
+ifeq ($(AWS_REGION),local)
+	@echo cannot deploy to local. Please specify AWS_REGION. && exit 1
+endif
 	sam deploy
 
-sam-deploy-guided:
+sam-deploy-guided: sam-build
 	printenv | grep AWS
 	sam deploy --guided
 

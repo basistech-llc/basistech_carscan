@@ -12,6 +12,7 @@
   "devDependencies": {
     "c8": "^10.1.3",
     "eslint": "^9.15.0",
+    "globals": "^17.3.0",
     "jsdom": "^24.1.3"
   }
 }

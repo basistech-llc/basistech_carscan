@@ -1,13 +1,31 @@
-"""Core API routes and background processing for CarScan."""
+"""Core API routes and background processing for CarScan.
 
+DynamoDB Table:
+primary key: 'user_email'
+sort key: 'sk'
+
+user_email - person who is logged in (e.g. simsong@basistech.com)
+sk - job#{job_id}
+ - contents - - status on an image that has been uploaded
+
+user_email - 'config'
+sk - '#'
+
+"""
+
+import re
 import os
 import time
 from typing import Any, Dict
+import json
+import argparse
+from pathlib import Path
 
 import boto3
 from boto3.dynamodb.conditions import Key
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler.router import Router
+from aws_lambda_powertools.event_handler import Response
 
 from . import brivo
 
@@ -15,11 +33,52 @@ logger = Logger(child=True)
 router = Router()                  # pylint: disable=not-callable
 s3_client = boto3.client("s3")
 
-print("********** AWS REGION:",os.getenv('AWS_REGION'))
-print("********** AWS DYNAMODB:",os.getenv('AWS_ENDPOINT_URL_DYNAMODB'))
-
 dynamodb  = boto3.resource("dynamodb", region_name=os.getenv('AWS_REGION'))
 table     = dynamodb.Table(os.getenv("TABLE_NAME","cala-garage-scans"))
+
+################################################################
+# Datbase Routines
+
+def save_all_plates(verbose=False,store_file:Path|None = None):
+    """save all the brivo plates
+    """
+    plates = brivo.dump_all_plates(verbose=verbose)
+    if store_file is not None:
+        store_file.write_text(json.dumps(plates,indent=4,default=str))
+    table.put_item(Item={'user_email':'plates',
+                         'sk':'plates',
+                         'plates':plates,
+                         'timestamp':int(time.time())})
+
+
+RE_PARENS = re.compile(r"\(.*\)")
+def canonicalize_brivo_plates(obj_array):
+    """Given the database of brivo plates, transform into an array of objects with 'plate' and 'name'"""
+    out = []
+    for obj in obj_array:
+        work = RE_PARENS.sub("", obj['plate'])
+        work = work.replace(" ","")
+        if "," in work:
+            plates = work.split(",")
+        elif "-" in work:
+            # the "-" might be in a single plate or it might separate two plates.
+            # If everything separated is larger than 4 characters, it is separating two plates
+            candidates = work.split("-")
+            if all( (len(candidate) > 4 for candidate in candidates ) ):
+                plates = candidates
+            else:
+                plates = [work.replace("-","")]
+        else:
+            plates = [work]
+        for plate in plates:
+            out.append({'plate':plate, 'name':obj['firstName'] + ' ' + obj['lastName']})
+    out.sort(key=lambda a:a['plate'])
+    return out
+
+
+
+def get_all_plates():
+    return table.get_item( Key={'user_email':'plates', 'sk':'plates'})['Item']
 
 # --- API Routes ---
 
@@ -53,18 +112,21 @@ def get_upload_params() -> Dict[str, Any]:
     )
     return {"presigned": presigned, "job_id": job_id}
 
-
-@router.get("/status/<job_id>")
-def get_scan_status(job_id: str) -> Dict[str, Any]:
+@router.get("/status")
+def get_scan_status() -> Dict[str, Any]:
     """Polled by the frontend to check if LPR is complete."""
-    user = router.context.get("user_email")
+    job_id = router.current_event.query_string_parameters.get("job_id")
+    if not job_id:
+        # Return 400 if missing
+        return Response( status_code=400, content_type="application/json",
+                         body=json.dumps({"error": "Missing job_id"}) )
+    logger.info("get_scan_status(%s)",job_id)
 
-    response = table.get_item(
-        Key={
-            "user_email": user,
-            "sk": f"job#{job_id}",
-        }
-    )
+    user = router.context.get("user_email")
+    try:
+        response = table.get_item( Key={ "user_email": user, "sk": f"job#{job_id}", } )
+    except table.exceptions.ResourceNotFoundException:
+        logger.exception("unknown table %s",table)
 
     item = response.get("Item")
     if not item:
@@ -81,11 +143,9 @@ def get_user_history() -> list:
         # If context not set, this is an error - middleware should have caught this
         # But if it somehow got through, return empty list
         return []
-    resp = table.query(
-        KeyConditionExpression=Key("user_email").eq(user),
-        ScanIndexForward=False,
-        Limit=50,
-    )
+    resp = table.query( KeyConditionExpression=Key("user_email").eq(user),
+                        ScanIndexForward=False,
+                        Limit=50 )
     return resp.get("Items", [])
 
 
@@ -116,55 +176,90 @@ def manual_entry() -> Dict[str, Any]:
     }
     try:
         table.put_item(Item=item)
-    except Exception as e:         # pylint: disable=broad-exception-caught
-        logger.error("Exception: %s",e)
+    except Exception:         # pylint: disable=broad-exception-caught
+        region = table.meta.client.meta.region_name
+        logger.info(f"DEBUG: Lambda Region={os.environ.get('AWS_REGION')} | Table Region={region} Name={table.name}")
+        logger.exception("table %s put_item failed",table)
 
     return {"status": "complete", "data": item}
 
+def rekognize(bucket=None, key=None,image_bytes=None) -> dict:
+    """recognize an image that is provided or uploaded"""
+    if os.environ.get('AWS_REGION','')=='local':
+        return []
+    if bucket is not None:
+        image = {"S3Object" : {"Bucket":bucket, "Name":key}}
+    elif image_bytes is not None:
+        image = {"Bytes":image_bytes}
+    else:
+        raise RuntimeError("no image provided")
+
+    rekognition = boto3.client("rekognition")
+    rek_resp = rekognition.detect_text( Image=image )
+    logger.debug("%s",json.dumps(rek_resp,indent=4,default=str))
+    return [r['DetectedText'] for r in rek_resp['TextDetections']
+            if (r['Type'] in ('WORD','LINE') and r['Confidence'] > 40) and len(r['DetectedText'])>=4]
 
 # --- Background Event Handling ---
-
 def handle_s3_event(detail: Dict[str, Any]) -> None:
     """
-    Triggered by S3 EventBridge.
+    Triggered by S3 EventBridge...
 
     Performs LPR, Brivo lookup, and saves to DynamoDB.
     """
     bucket = detail["bucket"]["name"]
-    key = detail["object"]["key"]
+    key    = detail["object"]["key"]
+    plate = None
+    result_name = None
 
     try:
         # 1. Retrieve metadata stored during the presigned post
         logger.info("s3_client=%s bucket=%s key=%s",s3_client,bucket,key)
         head = s3_client.head_object(Bucket=bucket, Key=key)
         user = head["Metadata"].get("user")
-        state = head["Metadata"].get("state", "MA")
 
-        # 2. Perform LPR via Rekognition
-        if os.environ.get('AWS_REGION','')!='local':
-            rekognition = boto3.client("rekognition")
-            rek_resp = rekognition.detect_text( Image={"S3Object": {"Bucket": bucket, "Name": key}} )
-            plate = next( ( t["DetectedText"] for t in rek_resp["TextDetections"] if t["Confidence"] > 90 ),
-                          "NOT_FOUND")
+        # See if there is an exact match
+        for text in rekognize(bucket=bucket, key=key):
+            result_name = brivo.brivo_lookup(text)
+            if result_name:
+                plate = text
+                break
 
-            result_name = brivo.brivo_lookup(plate)
-        else:
-            result_name = None
-            plate = "n/a"
-
-        # 4. Save record for frontend polling and history
-        table.put_item(
-            Item={
-                "user_email": user,
-                "sk": f"job#{key}",
-                "plate": plate,
-                "state": state,
-                "result": result_name,
-                "timestamp": int(time.time()),
-                "image_key": key,
-            }
-        )
-        logger.info("Asynchronous scan complete for %s", key)
+        # Failing that, search the database
 
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Background processing failed for %s: %s", key, exc)
+
+    try:
+        # 4. Save record for frontend polling and history
+        item = { "user_email": user,
+                 "sk": f"job#{key}",
+                 "plate": plate,
+                 "result": result_name,
+                 "timestamp": int(time.time()),
+                 "image_key": key }
+        table.put_item( Item= item )
+        logger.info("Asynchronous scan complete for %s", key)
+        logger.error("item=%s",json.dumps(item))
+    except Exception:  # pylint: disable=broad-except
+        region = table.meta.client.meta.region_name
+        logger.info(f"DEBUG: Lambda Region={os.environ.get('AWS_REGION')} | Table Region={region} Name={table.name}")
+        logger.exception("table %s put_item failed",table)
+
+def main():
+    parser = argparse.ArgumentParser(description='License Plate CLI tester',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--rekognize", help="analyze a file with rekognition" , type=Path)
+    parser.add_argument("--store-plates", help='store all the plates in the DynamoDB database', action='store_true')
+    parser.add_argument("--store-file", help="When storing all plates, also write the JSON to this file",type=Path)
+    parser.add_argument("--search", help="try to match a plate to the database")
+    args = parser.parse_args()
+    if args.rekognize:
+        print(json.dumps(rekognize(image_bytes=args.rekognize.read_bytes()),indent=4,default=str))
+    if args.store_plates:
+        save_all_plates(verbose=True,store_file=args.store_file)
+    if args.search:
+        print(get_all_plates())
+
+if __name__=="__main__":
+    main()
