@@ -2,8 +2,9 @@
 
 import base64
 import json
-import uuid
 import sys
+import time
+import uuid
 from pathlib import Path
 import os
 
@@ -108,8 +109,6 @@ def test_upload_url_generation(api_event):
     api_event["requestContext"]["routeKey"] = "GET /api/upload-url"
     api_event["requestContext"]["http"]["method"] = "GET"
     api_event["requestContext"]["http"]["path"] = "/api/upload-url"
-    api_event["rawQueryString"] = "state=VA"
-    api_event["queryStringParameters"] = {"state": "VA"}
     response = lambda_handler(api_event, {})
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
@@ -189,3 +188,78 @@ def test_all_plates_api_mocked(api_event):
     assert isinstance(body, list)
     assert len(body) > 0
     assert all("plate" in row and "name" in row for row in body)
+
+
+def test_history_api_returns_user_scans(api_event):
+    """GET /api/history returns scans for the authenticated user.
+
+    Uses local DynamoDB. Inserts test items then verifies history returns them
+    with correct shape (plate, result, timestamp, image_key, status).
+    """
+    user = "test@example.com"
+    now = int(time.time())
+    items_to_insert = [
+        {
+            "user_email": user,
+            "sk": "job#uploads/1000-test.jpg",
+            "plate": "ABC123",
+            "result": {"firstName": "Jane", "lastName": "Doe"},
+            "timestamp": now,
+            "image_key": "uploads/1000-test.jpg",
+        },
+        {
+            "user_email": user,
+            "sk": "job#uploads/1001-test.jpg",
+            "plate": None,
+            "result": None,
+            "timestamp": now - 100,
+            "image_key": "uploads/1001-test.jpg",
+        },
+        {
+            "user_email": user,
+            "sk": "job#manual/2000",
+            "plate": "NOT_FOUND",
+            "result": None,
+            "timestamp": now - 200,
+            "image_key": "manual",
+        },
+    ]
+    for item in items_to_insert:
+        table.put_item(Item=item)
+
+    ev = _http_event("GET", "/api/history")
+    ev["headers"] = api_event["headers"]
+    ev["routeKey"] = "GET /api/history"
+    ev["rawPath"] = "/api/history"
+    ev["requestContext"]["routeKey"] = "GET /api/history"
+    ev["requestContext"]["http"]["method"] = "GET"
+    ev["requestContext"]["http"]["path"] = "/api/history"
+    response = lambda_handler(ev, {})
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert isinstance(body, list)
+    assert len(body) >= 3
+
+    by_sk = {it["sk"]: it for it in body}
+    assert "job#uploads/1000-test.jpg" in by_sk
+    assert "job#uploads/1001-test.jpg" in by_sk
+    assert "job#manual/2000" in by_sk
+
+    it1 = by_sk["job#uploads/1000-test.jpg"]
+    assert it1["plate"] == "ABC123"
+    assert it1["result"] == {"firstName": "Jane", "lastName": "Doe"}
+    assert "timestamp" in it1
+    assert it1["image_key"] == "uploads/1000-test.jpg"
+    assert it1["status"] == "complete"
+
+    it2 = by_sk["job#uploads/1001-test.jpg"]
+    assert it2["plate"] is None
+    assert it2["result"] is None
+    assert it2["status"] == "complete"
+
+    it3 = by_sk["job#manual/2000"]
+    assert it3["plate"] == "NOT_FOUND"
+    assert it3["result"] is None
+    assert it3["image_key"] == "manual"
+    assert it3["status"] == "manual"

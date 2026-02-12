@@ -41,6 +41,15 @@ input, select { padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-
 #history-list li { padding: 12px; border-bottom: 1px solid #eee; }
 .h-main { display: flex; justify-content: space-between; font-weight: bold; }
 .h-sub { font-size: 0.85em; color: #666; margin-top: 4px; }
+.h-status { font-size: 0.8em; color: #666; margin-left: 8px; }
+.btn-show-image { margin-left: 8px; padding: 4px 10px; font-size: 12px; }
+
+/* Image modal */
+.image-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; display: flex; align-items: center; justify-content: center; }
+.image-modal.hidden { display: none; }
+.image-modal-content { position: relative; max-width: 95vw; max-height: 95vh; }
+.image-modal-close { position: absolute; top: -8px; right: -8px; width: 28px; height: 28px; border: none; background: #333; color: #fff; font-size: 20px; cursor: pointer; border-radius: 50%; }
+.image-modal-content img { max-width: 95vw; max-height: 85vh; display: block; }
 
 /* Landing page (sign-in) */
 .landing-box {

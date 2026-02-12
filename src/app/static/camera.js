@@ -235,7 +235,9 @@ async function pollForResult(jobId) {
         pollIntervalId = null;
         const data = statusData.data;
         const found = data.result !== "Unknown" && data.plate !== "NOT_FOUND";
-        showResult(data.result, `${data.plate} (${data.state})`, found);
+        const title = formatResultDisplay(data.result);
+        const subtitle = data.plate || '—';
+        showResult(title, subtitle, found);
       }
     } catch (e) {
       console.error("Polling error", e);
@@ -270,25 +272,81 @@ function showResult(title, subtitle, isSuccess) {
 }
 
 /**
+ * Format result for display (Brivo user dict or null).
+ */
+function formatResultDisplay(result) {
+  if (result == null) return 'Not found';
+  if (typeof result === 'object') {
+    const first = result.firstName || '';
+    const last = result.lastName || '';
+    return `${first} ${last}`.trim() || 'Unknown';
+  }
+  return String(result);
+}
+
+/** Show image modal from presigned URL. Called from onclick in history list. */
+// eslint-disable-next-line no-unused-vars
+async function showImageModal(imageKey) {
+  if (imageKey === 'manual') return;
+  const res = await apiCall(`api/image-url?key=${encodeURIComponent(imageKey)}`);
+  if (!res.ok) return;
+  const { url } = await res.json();
+  const modal = document.getElementById('image-modal');
+  const img = document.getElementById('image-modal-img');
+  if (!modal || !img) return;
+  img.src = url;
+  modal.classList.remove('hidden');
+}
+
+/** Close image modal. Called from onclick. */
+// eslint-disable-next-line no-unused-vars
+function closeImageModal() {
+  const modal = document.getElementById('image-modal');
+  const img = document.getElementById('image-modal-img');
+  if (modal) modal.classList.add('hidden');
+  if (img) img.removeAttribute('src');
+}
+
+/**
  * History Loader
  */
-async function loadHistory() {
-  const res = await apiCall('api/history');
-  if(res.status === 401) return window.location.reload();
+async function loadHistory(showAll = false) {
+  const url = showAll ? 'api/history?show_all=1' : 'api/history';
+  const res = await apiCall(url);
+  if (res.status === 401) return window.location.reload();
 
   const items = await res.json();
   const list = document.getElementById('history-list');
-  list.innerHTML = items.map(item => `
-        <li>
+  const showAllBtn = document.getElementById('history-show-all-btn');
+
+  list.innerHTML = items.map(item => {
+    const resultDisplay = item.result_display ?? formatResultDisplay(item.result);
+    const plateDisplay = item.plate_display ?? (item.plate || '—');
+    const status = item.status ?? (item.image_key === 'manual' ? 'manual' : 'complete');
+    const canShowImage = item.image_key && item.image_key !== 'manual';
+    const hasOcr = item.ocr_text != null;
+    const hasTopMatches = Array.isArray(item.top_matches) && item.top_matches.length > 0;
+
+    return `
+        <li class="history-item">
             <div class="h-main">
-                <strong>${item.result}</strong>
-                <span>${item.plate} (${item.state})</span>
+                <strong>${escapeHtml(resultDisplay)}</strong>
+                <span>${escapeHtml(plateDisplay)}</span>
+                ${status === 'manual' ? '<span class="h-status">Manual</span>' : ''}
             </div>
+            ${hasOcr ? `<div class="h-ocr">OCR: ${escapeHtml(item.ocr_text)}</div>` : ''}
+            ${hasTopMatches ? `<div class="h-matches">Top: ${item.top_matches.slice(0, 3).map(m => escapeHtml(m.plate || m)).join(', ')}</div>` : ''}
             <div class="h-sub">
-                ${new Date(item.timestamp * 1000).toLocaleString()}
+                ${new Date((item.timestamp || 0) * 1000).toLocaleString()}
+                ${canShowImage ? `<button type="button" class="btn-show-image" data-image-key="${escapeHtml(item.image_key)}" onclick="showImageModal(this.getAttribute('data-image-key'))">Show</button>` : ''}
             </div>
         </li>
-    `).join('');
+    `;
+  }).join('');
+
+  if (showAllBtn) {
+    showAllBtn.style.display = showAll ? 'none' : 'block';
+  }
 }
 
 /**

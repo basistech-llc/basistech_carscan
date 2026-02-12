@@ -40,8 +40,9 @@
         </div>
 
         <div id="history-tab" class="tab-content">
-            <button onclick="loadHistory()" style="margin-bottom:10px;">Refresh</button>
+            <button onclick="loadHistory(false)" style="margin-bottom:10px;">Refresh</button>
             <ul id="history-list"></ul>
+            <button id="history-show-all-btn" onclick="loadHistory(true)" style="margin-top:10px; display:none;">Show all</button>
         </div>
 
         <div id="all-tab" class="tab-content">
@@ -57,6 +58,12 @@
                     <tbody id="all-plates-body"></tbody>
                 </table>
             </div>
+        </div>
+    </div>
+    <div id="image-modal" class="image-modal hidden" onclick="closeImageModal()">
+        <div class="image-modal-content" onclick="event.stopPropagation()">
+            <button type="button" class="image-modal-close" onclick="closeImageModal()">×</button>
+            <img id="image-modal-img" alt="Scan photo" />
         </div>
     </div>
     <footer class="user-footer">

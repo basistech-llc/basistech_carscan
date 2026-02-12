@@ -97,8 +97,6 @@ def get_upload_params() -> Dict[str, Any]:
     if not user:
         # If context not set, this is an error - middleware should have set it
         raise ValueError("user_email not found in context - authentication failed")
-    state = router.current_event.query_string_parameters.get("state", "MA")
-
     # Create a unique job ID based on timestamp and user
     job_id = f"uploads/{int(time.time())}-{user.split('@')[0]}.jpg"
 
@@ -107,12 +105,10 @@ def get_upload_params() -> Dict[str, Any]:
         Key=job_id,
         Fields={
             "x-amz-meta-user": user,
-            "x-amz-meta-state": state,
             "Content-Type": "image/jpeg",
         },
         Conditions=[
             {"x-amz-meta-user": user},
-            {"x-amz-meta-state": state},
             ["starts-with", "$Content-Type", "image/"],
         ],
         ExpiresIn=3600,
@@ -142,18 +138,74 @@ def get_scan_status() -> Dict[str, Any]:
     return {"status": "complete", "data": item}
 
 
+def _format_result_display(result) -> str:
+    """Convert result (Brivo user dict or None) to display string."""
+    if result is None:
+        return "Not found"
+    if isinstance(result, dict):
+        first = result.get("firstName") or ""
+        last = result.get("lastName") or ""
+        return f"{first} {last}".strip() or "Unknown"
+    return str(result)
+
+
 @router.get("/history")
 def get_user_history() -> list:
-    """Return the last 50 scans for the logged-in user."""
+    """Return scans for the logged-in user. Past 30 days by default; show_all=1 for all."""
     user = router.context.get("user_email")
     if not user:
-        # If context not set, this is an error - middleware should have caught this
-        # But if it somehow got through, return empty list
         return []
-    resp = table.query( KeyConditionExpression=Key("user_email").eq(user),
-                        ScanIndexForward=False,
-                        Limit=50 )
-    return resp.get("Items", [])
+    show_all = router.current_event.query_string_parameters.get("show_all") == "1"
+    limit = 500 if show_all else 50
+    resp = table.query(
+        KeyConditionExpression=Key("user_email").eq(user),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    items = resp.get("Items", [])
+    cutoff = int(time.time()) - (30 * 24 * 3600)  # 30 days ago
+    if not show_all:
+        items = [it for it in items if it.get("timestamp", 0) >= cutoff]
+    # Add display-friendly fields and status; keep raw for future OCR/top_matches
+    for it in items:
+        it["result_display"] = _format_result_display(it.get("result"))
+        it["plate_display"] = it.get("plate") or "—"
+        it["status"] = "manual" if it.get("image_key") == "manual" else "complete"
+    return items
+
+
+@router.get("/image-url")
+def get_image_presigned_url() -> Dict[str, Any]:
+    """Return presigned GET URL for a scan image. User must own the scan."""
+    user = router.context.get("user_email")
+    if not user:
+        raise ValueError("user_email not found in context")
+    key = router.current_event.query_string_parameters.get("key")
+    if not key:
+        return Response(
+            status_code=400,
+            content_type="application/json",
+            body=json.dumps({"error": "Missing key"}),
+        )
+    if key == "manual":
+        return Response(
+            status_code=404,
+            content_type="application/json",
+            body=json.dumps({"error": "No image for manual entry"}),
+        )
+    resp = table.get_item(Key={"user_email": user, "sk": f"job#{key}"})
+    if not resp.get("Item"):
+        return Response(
+            status_code=404,
+            content_type="application/json",
+            body=json.dumps({"error": "Not found"}),
+        )
+    url = s3_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": os.environ["BUCKET_NAME"], "Key": key},
+        ExpiresIn=3600,
+    )
+    return {"url": url}
 
 
 @router.get("/all-plates")
@@ -248,6 +300,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
 
     try:
         # 4. Save record for frontend polling and history
+        # Schema provisions: ocr_text, top_matches (list of {plate, confidence}) for future
         item = { "user_email": user,
                  "sk": f"job#{key}",
                  "plate": plate,
