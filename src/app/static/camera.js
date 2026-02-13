@@ -264,7 +264,10 @@ async function pollForResult(jobId) {
         const data = statusData.data;
         const found = data.result !== "Unknown" && data.plate !== "NOT_FOUND";
         const title = formatResultDisplay(data.result);
-        const subtitle = data.plate || '—';
+        let subtitle = data.plate || '—';
+        if (data.match_pct != null) {
+          subtitle += ` | Match: ${data.match_pct}%`;
+        }
         showResult(title, subtitle, found);
       }
     } catch (e) {
@@ -377,7 +380,10 @@ async function loadHistory(showAll = false) {
 
   list.innerHTML = items.map(item => {
     const resultDisplay = item.result_display ?? formatResultDisplay(item.result);
-    const plateDisplay = item.plate_display ?? (item.plate || '—');
+    let plateDisplay = item.plate_display ?? (item.plate || '—');
+    if (item.match_pct != null) {
+      plateDisplay += ` | Match: ${item.match_pct}%`;
+    }
     const status = item.status ?? (item.image_key === 'manual' ? 'manual' : 'complete');
     const canShowImage = item.image_key && item.image_key !== 'manual';
     const hasOcr = item.ocr_text != null;

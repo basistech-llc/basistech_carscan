@@ -28,6 +28,7 @@ from aws_lambda_powertools.event_handler.router import Router
 from aws_lambda_powertools.event_handler import Response
 
 from . import brivo
+from . import fuzzy_match
 
 logger = Logger(child=True)
 router = Router()                  # pylint: disable=not-callable
@@ -305,8 +306,12 @@ def rekognize(bucket=None, key=None,image_bytes=None) -> dict:
     rekognition = boto3.client("rekognition")
     rek_resp = rekognition.detect_text( Image=image )
     logger.debug("%s",json.dumps(rek_resp,indent=4,default=str))
-    return [r['DetectedText'] for r in rek_resp['TextDetections']
-            if (r['Type'] in ('WORD','LINE') and r['Confidence'] > 40) and len(r['DetectedText'])>=4]
+    return [
+        {"text": r["DetectedText"], "confidence": r["Confidence"]}
+        for r in rek_resp["TextDetections"]
+        if (r["Type"] in ("WORD", "LINE") and r["Confidence"] > 40)
+        and len(r["DetectedText"]) >= 4
+    ]
 
 # --- Background Event Handling ---
 def handle_s3_event(detail: Dict[str, Any]) -> None:
@@ -316,9 +321,12 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
     Performs LPR, Brivo lookup, and saves to DynamoDB.
     """
     bucket = detail["bucket"]["name"]
-    key    = detail["object"]["key"]
+    key = detail["object"]["key"]
     plate = None
     result_name = None
+    raw_ocr = None
+    ocr_pct = None
+    match_pct = None
 
     try:
         # 1. Retrieve metadata stored during the presigned post
@@ -326,28 +334,65 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
         head = s3_client.head_object(Bucket=bucket, Key=key)
         user = head["Metadata"].get("user")
 
-        # See if there is an exact match
-        for text in rekognize(bucket=bucket, key=key):
+        ocr_results = rekognize(bucket=bucket, key=key)
+
+        # 1. Try exact match first
+        for det in ocr_results:
+            text = det["text"] if isinstance(det, dict) else det
+            conf = det.get("confidence", 0) if isinstance(det, dict) else 0
             result_name = brivo.brivo_lookup(text)
             if result_name:
                 plate = text
+                raw_ocr = text
+                ocr_pct = round(conf, 1) if conf else None
+                match_pct = 100.0  # exact match
                 break
 
-        # Failing that, search the database
+        # 2. Failing that, fuzzy match against all plates in DB
+        if plate is None and ocr_results:
+            plate_strings = [p["plate"] for p in get_all_plates()]
+            if plate_strings:
+                best = None
+                for det in ocr_results:
+                    text = det["text"] if isinstance(det, dict) else det
+                    conf = det.get("confidence", 0) if isinstance(det, dict) else 0
+                    fm = fuzzy_match.find_closest_plate_entry(
+                        plate_strings, text, conf, min_score_thresh=60
+                    )
+                    if fm["matched_record"]:
+                        if best is None:
+                            best = fm
+                            raw_ocr = text
+                        elif fm["composite_score"] > best["composite_score"]:
+                            best = fm
+                            raw_ocr = text
+                if best:
+                    plate = best["matched_record"]
+                    result_name = brivo.brivo_lookup(plate)
+                    raw_ocr = raw_ocr or plate
+                    ocr_pct = round(best["aws_confidence"], 1)
+                    match_pct = round(best["match_score"], 1)
 
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Background processing failed for %s: %s", key, exc)
 
     try:
         # 4. Save record for frontend polling and history
-        # Schema provisions: ocr_text, top_matches (list of {plate, confidence}) for future
-        item = { "user_email": user,
-                 "sk": f"job#{key}",
-                 "plate": plate,
-                 "result": result_name,
-                 "timestamp": int(time.time()),
-                 "image_key": key }
-        table.put_item( Item= item )
+        item = {
+            "user_email": user,
+            "sk": f"job#{key}",
+            "plate": plate,
+            "result": result_name,
+            "timestamp": int(time.time()),
+            "image_key": key,
+        }
+        if raw_ocr is not None:
+            item["ocr_text"] = raw_ocr
+        if ocr_pct is not None:
+            item["ocr_pct"] = ocr_pct
+        if match_pct is not None:
+            item["match_pct"] = match_pct
+        table.put_item(Item=item)
         logger.info("Asynchronous scan complete for %s", key)
         logger.error("item=%s",json.dumps(item))
     except Exception:  # pylint: disable=broad-except

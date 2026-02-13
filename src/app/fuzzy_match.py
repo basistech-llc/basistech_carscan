@@ -34,7 +34,7 @@ def find_closest_plate_entry(plates, ocr_text, aws_confidence, min_score_thresh=
         )
 
         if result:
-            match_str, score, index = result
+            _match_str, score, index = result
             if score > highest_score:
                 highest_score = score
                 best_match = plates[index]
@@ -49,9 +49,9 @@ def find_closest_plate_entry(plates, ocr_text, aws_confidence, min_score_thresh=
         "is_reliable": composite_score > 80
     }
 
-if __name__=="__main__":
-    """quick test program"""
-    plates = ['EVF895', '12345','ABCDEF','12845']
+if __name__ == "__main__":
+    # quick test program
+    plates = ['EVF895', '12345', 'ABCDEF', '12845']
 
     # OCR sees "F895" (4 chars), misses the EV.
     # Logic: "F895" is length 4 -> Try "EVF895" -> Perfect Match.
