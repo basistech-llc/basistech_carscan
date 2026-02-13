@@ -328,7 +328,7 @@ def handle_s3_event(detail: Dict[str, Any]) -> None:
     ocr_pct = None
     match_pct = None
 
-    try:
+    try:       # pylint: disable=too-many-nested-blocks
         # 1. Retrieve metadata stored during the presigned post
         logger.info("s3_client=%s bucket=%s key=%s",s3_client,bucket,key)
         head = s3_client.head_object(Bucket=bucket, Key=key)
