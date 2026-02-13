@@ -14,10 +14,6 @@ export AWS_PROFILE=basistech
 
 include Makefile.dev
 
-# Testing commands - use poetry run
-test:
-	poetry run pytest tests/ -v
-
 install-ubuntu:
 	sudo apt-get update
 	which pipx || sudo apt install -y pipx

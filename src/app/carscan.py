@@ -174,6 +174,46 @@ def get_user_history() -> list:
     return items
 
 
+@router.delete("/scan")
+def delete_scan() -> Dict[str, Any]:
+    """Delete a scan: DynamoDB entry and S3 object (if present). Authenticated."""
+    user = router.context.get("user_email")
+    if not user:
+        raise ValueError("user_email not found in context")
+    sk = router.current_event.query_string_parameters.get("sk")
+    if not sk:
+        return Response(
+            status_code=400,
+            content_type="application/json",
+            body=json.dumps({"error": "Missing sk"}),
+        )
+    if not sk.startswith("job#"):
+        return Response(
+            status_code=400,
+            content_type="application/json",
+            body=json.dumps({"error": "Invalid sk"}),
+        )
+    resp = table.get_item(Key={"user_email": user, "sk": sk})
+    item = resp.get("Item")
+    if not item:
+        return Response(
+            status_code=404,
+            content_type="application/json",
+            body=json.dumps({"error": "Not found"}),
+        )
+    image_key = item.get("image_key")
+    bucket = os.environ["BUCKET_NAME"]
+    if image_key and image_key != "manual":
+        try:
+            s3_client.delete_object(Bucket=bucket, Key=image_key)
+            logger.info("Deleted S3 object: bucket=%s key=%s user=%s", bucket, image_key, user)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("S3 delete failed (object may not exist): %s", exc)
+    table.delete_item(Key={"user_email": user, "sk": sk})
+    logger.info("Deleted scan: user=%s sk=%s image_key=%s", user, sk, image_key)
+    return {"deleted": True}
+
+
 @router.get("/image-url")
 def get_image_presigned_url() -> Dict[str, Any]:
     """Return presigned GET URL for a scan image. User must own the scan."""

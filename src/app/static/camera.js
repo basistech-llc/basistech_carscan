@@ -6,6 +6,9 @@ const UPLOAD_TIMEOUT_SECONDS = 10;
 let uploadAbortController = null;
 let pollIntervalId = null;
 
+// Timestamp overlay on live preview
+let timestampIntervalId = null;
+
 // Get current API base path (e.g. /Prod/ or /Staging/) from window location
 const API_BASE = window.location.pathname.endsWith('/')
       ? window.location.pathname
@@ -19,19 +22,39 @@ async function apiCall(endpoint, options={}) {
   return fetch(url, options);
 }
 
+function stopTimestampOverlay() {
+  if (timestampIntervalId != null) {
+    clearInterval(timestampIntervalId);
+    timestampIntervalId = null;
+  }
+}
+
+function updateTimestampOverlay() {
+  const el = document.getElementById('timestamp-overlay');
+  if (el) el.textContent = new Date().toLocaleString();
+}
+
+function startTimestampOverlay() {
+  stopTimestampOverlay();
+  updateTimestampOverlay();
+  timestampIntervalId = setInterval(updateTimestampOverlay, 1000);
+}
+
 async function initCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { exact: "environment" } } // Force rear camera
     });
-    console.log("using rear campera");
+    console.log("using rear camera");
     video.srcObject = stream;
+    startTimestampOverlay();
   } catch (err) {
     console.warn("Rear camera failed, trying default", err);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       video.srcObject = stream;
-      console.log("using default campera");
+      console.log("using default camera");
+      startTimestampOverlay();
     } catch {
       alert("Camera access denied.");
     }
@@ -114,30 +137,32 @@ function addTimestampToCanvas(ctx, w, h) {
 
 // Used in HTML: onclick="captureAndScan()"
 async function captureAndScan() {
-  // Capture frame while video is live, add timestamp
-  const context = canvas.getContext('2d');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
-  addTimestampToCanvas(context, canvas.width, canvas.height);
+  stopTimestampOverlay();
+  // Draw video frame to canvas with timestamp
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (w > 0 && h > 0) {
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, w, h);
+    addTimestampToCanvas(ctx, w, h);
+  }
 
-  // Stop video stream
+  // Stop video stream and switch to canvas view
   const stream = video.srcObject;
   if (stream) {
     stream.getTracks().forEach(t => t.stop());
     video.srcObject = null;
   }
-
-  // Show captured image, hide live video
   video.style.display = 'none';
+  document.getElementById('timestamp-overlay').style.display = 'none';
   canvas.style.display = 'block';
-  canvas.style.width = '100%';
-  canvas.style.height = '100%';
-  canvas.style.objectFit = 'cover';
 
   // Change button to [live]
   const btn = document.getElementById('scan-btn');
-  btn.textContent = '[live]';
+  btn.className = 'scan-btn live-btn';
+  btn.innerHTML = '<span>[live]</span>';
   btn.onclick = goLive;
 
   canvas.toBlob(post_image, "image/jpeg", 0.95);
@@ -155,13 +180,16 @@ function goLive() {
     pollIntervalId = null;
   }
 
-  // Show video, hide canvas
-  video.style.display = '';
+  // Switch back to video view
   canvas.style.display = 'none';
+  video.style.display = 'block';
+  const overlay = document.getElementById('timestamp-overlay');
+  if (overlay) overlay.style.display = '';
 
-  // Change button to [scan]
+  // Change button back to scan (camera + OCR)
   const btn = document.getElementById('scan-btn');
-  btn.textContent = '[scan]';
+  btn.className = 'scan-btn';
+  btn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span>OCR</span>';
   btn.onclick = captureAndScan;
 
   // Restart camera
@@ -288,18 +316,22 @@ function formatResultDisplay(result) {
 // eslint-disable-next-line no-unused-vars
 async function showImageModal(imageKey) {
   if (imageKey === 'manual') return;
+  const sk = `job#${imageKey}`;
   const res = await apiCall(`api/image-url?key=${encodeURIComponent(imageKey)}`);
   if (!res.ok) return;
   const { url } = await res.json();
   const modal = document.getElementById('image-modal');
   const img = document.getElementById('image-modal-img');
+  const deleteBtn = document.getElementById('image-modal-delete-btn');
   if (!modal || !img) return;
   img.src = url;
+  if (deleteBtn) {
+    deleteBtn.onclick = (e) => { e.stopPropagation(); deleteScanAndClose(sk); };
+  }
   modal.classList.remove('hidden');
 }
 
 /** Close image modal. Called from onclick. */
-// eslint-disable-next-line no-unused-vars
 function closeImageModal() {
   const modal = document.getElementById('image-modal');
   const img = document.getElementById('image-modal-img');
@@ -307,10 +339,34 @@ function closeImageModal() {
   if (img) img.removeAttribute('src');
 }
 
+async function deleteScanAndClose(sk) {
+  const res = await apiCall(`api/scan?sk=${encodeURIComponent(sk)}`, { method: 'DELETE' });
+  if (res.ok) {
+    closeImageModal();
+    loadHistory(historyShowAll);
+  }
+}
+
+/** Delete scan from list. Called from onclick in history item. */
+// eslint-disable-next-line no-unused-vars
+async function deleteScan(sk) {
+  const res = await apiCall(`api/scan?sk=${encodeURIComponent(sk)}`, { method: 'DELETE' });
+  if (res.ok) {
+    loadHistory(historyShowAll);
+  }
+}
+
+function showSaveNotImplemented() {
+  alert('Save is not currently implemented');
+}
+
 /**
  * History Loader
  */
+let historyShowAll = false;
+
 async function loadHistory(showAll = false) {
+  historyShowAll = showAll;
   const url = showAll ? 'api/history?show_all=1' : 'api/history';
   const res = await apiCall(url);
   if (res.status === 401) return window.location.reload();
@@ -326,23 +382,33 @@ async function loadHistory(showAll = false) {
     const canShowImage = item.image_key && item.image_key !== 'manual';
     const hasOcr = item.ocr_text != null;
     const hasTopMatches = Array.isArray(item.top_matches) && item.top_matches.length > 0;
+    const sk = item.sk || `job#${item.image_key || ''}`;
 
     return `
         <li class="history-item">
-            <div class="h-main">
-                <strong>${escapeHtml(resultDisplay)}</strong>
-                <span>${escapeHtml(plateDisplay)}</span>
-                ${status === 'manual' ? '<span class="h-status">Manual</span>' : ''}
-            </div>
-            ${hasOcr ? `<div class="h-ocr">OCR: ${escapeHtml(item.ocr_text)}</div>` : ''}
-            ${hasTopMatches ? `<div class="h-matches">Top: ${item.top_matches.slice(0, 3).map(m => escapeHtml(m.plate || m)).join(', ')}</div>` : ''}
-            <div class="h-sub">
-                ${new Date((item.timestamp || 0) * 1000).toLocaleString()}
-                ${canShowImage ? `<button type="button" class="btn-show-image" data-image-key="${escapeHtml(item.image_key)}" onclick="showImageModal(this.getAttribute('data-image-key'))">Show</button>` : ''}
+            <div class="history-item-swipe" data-sk="${escapeHtml(sk)}">
+                <div class="history-item-content">
+                    <div class="h-main">
+                        <strong>${escapeHtml(resultDisplay)}</strong>
+                        <span>${escapeHtml(plateDisplay)}</span>
+                        ${status === 'manual' ? '<span class="h-status">Manual</span>' : ''}
+                    </div>
+                    ${hasOcr ? `<div class="h-ocr">OCR: ${escapeHtml(item.ocr_text)}</div>` : ''}
+                    ${hasTopMatches ? `<div class="h-matches">Top: ${item.top_matches.slice(0, 3).map(m => escapeHtml(m.plate || m)).join(', ')}</div>` : ''}
+                    <div class="h-sub">
+                        ${new Date((item.timestamp || 0) * 1000).toLocaleString()}
+                        ${canShowImage ? `<button type="button" class="btn-show-image" data-image-key="${escapeHtml(item.image_key)}" onclick="event.stopPropagation(); showImageModal(this.getAttribute('data-image-key'))">Show</button>` : ''}
+                    </div>
+                </div>
+                <button type="button" class="history-item-delete" onclick="event.stopPropagation(); deleteScan(this.closest('.history-item-swipe').dataset.sk)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                </button>
             </div>
         </li>
     `;
   }).join('');
+
+  setupSwipeHandlers(list);
 
   if (showAllBtn) {
     showAllBtn.style.display = showAll ? 'none' : 'block';
@@ -386,6 +452,56 @@ function escapeHtml(s) {
   const div = document.createElement('div');
   div.textContent = s;
   return div.innerHTML;
+}
+
+const SWIPE_THRESHOLD = 50;
+const DELETE_BUTTON_WIDTH = 64;
+
+function setupSwipeHandlers(listEl) {
+  if (!listEl) return;
+  listEl.querySelectorAll('.history-item-swipe').forEach((swipeEl) => {
+    const content = swipeEl.querySelector('.history-item-content');
+    if (!content) return;
+    let startX = 0;
+    let currentX = 0;
+
+    const onStart = (e) => {
+      startX = (e.touches ? e.touches[0] : e).clientX;
+      currentX = 0;
+    };
+    const onMove = (e) => {
+      const x = (e.touches ? e.touches[0] : e).clientX;
+      const delta = x - startX;
+      const revealed = content.classList.contains('swipe-reveal');
+      const base = revealed ? -DELETE_BUTTON_WIDTH : 0;
+      currentX = Math.max(-DELETE_BUTTON_WIDTH, Math.min(DELETE_BUTTON_WIDTH, base + delta));
+      content.style.transform = `translateX(${currentX}px)`;
+    };
+    const onEnd = () => {
+      const revealed = content.classList.contains('swipe-reveal');
+      if (currentX < -SWIPE_THRESHOLD) {
+        content.classList.add('swipe-reveal');
+        content.style.transform = `translateX(-${DELETE_BUTTON_WIDTH}px)`;
+      } else if (currentX > SWIPE_THRESHOLD && revealed) {
+        content.classList.remove('swipe-reveal');
+        content.style.transform = '';
+      } else if (currentX > SWIPE_THRESHOLD && !revealed) {
+        content.style.transform = '';
+        showSaveNotImplemented();
+      } else {
+        content.style.transform = revealed ? `translateX(-${DELETE_BUTTON_WIDTH}px)` : '';
+      }
+      currentX = 0;
+    };
+
+    content.addEventListener('touchstart', onStart, { passive: true });
+    content.addEventListener('touchmove', onMove, { passive: true });
+    content.addEventListener('touchend', onEnd);
+    content.addEventListener('mousedown', onStart);
+    content.addEventListener('mousemove', (e) => { if (e.buttons) onMove(e); });
+    content.addEventListener('mouseup', onEnd);
+    content.addEventListener('mouseleave', onEnd);
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

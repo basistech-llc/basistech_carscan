@@ -263,3 +263,36 @@ def test_history_api_returns_user_scans(api_event):
     assert it3["result"] is None
     assert it3["image_key"] == "manual"
     assert it3["status"] == "manual"
+
+
+def test_delete_scan_api(api_event):
+    """DELETE /api/scan deletes DynamoDB entry and S3 object (if present)."""
+    user = "test@example.com"
+    now = int(time.time())
+    sk = "job#manual/delete-test"
+    table.put_item(Item={
+        "user_email": user,
+        "sk": sk,
+        "plate": "DEL123",
+        "result": None,
+        "timestamp": now,
+        "image_key": "manual",
+    })
+
+    ev = _http_event("DELETE", "/api/scan")
+    ev["headers"] = api_event["headers"]
+    ev["routeKey"] = "DELETE /api/scan"
+    ev["rawPath"] = "/api/scan"
+    ev["rawQueryString"] = f"sk={sk.replace('#', '%23')}"
+    ev["queryStringParameters"] = {"sk": sk}
+    ev["requestContext"]["routeKey"] = "DELETE /api/scan"
+    ev["requestContext"]["http"]["method"] = "DELETE"
+    ev["requestContext"]["http"]["path"] = "/api/scan"
+    response = lambda_handler(ev, {})
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body.get("deleted") is True
+
+    resp = table.get_item(Key={"user_email": user, "sk": sk})
+    assert resp.get("Item") is None

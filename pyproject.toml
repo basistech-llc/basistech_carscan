@@ -28,6 +28,7 @@ pytest = "^9.0.2"
 pytest-cov = "^7.0.0"
 aws-lambda-powertools = "^3.24.0"
 botocore = {extras = ["crt"], version = "^1.42.41"}
+rapidfuzz = "^3.14.3"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -65,6 +65,9 @@ check:
 	make pytest && \
 	make jscoverage
 
+test:
+	make check
+
 lint:
 	make pylint
 	make eslint
@@ -145,7 +148,7 @@ pytest: $(PYR)
 	poetry --version
 	poetry run python --version
 	printenv | grep AWS
-	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests
+	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests/
 
 
 pytest-coverage: $(PYR)
@@ -372,6 +375,7 @@ sam-deploy: sam-build
 ifeq ($(AWS_REGION),local)
 	@echo cannot deploy to local. Please specify AWS_REGION. && exit 1
 endif
+	make check
 	sam deploy
 
 sam-deploy-guided: sam-build
