@@ -12,18 +12,30 @@
         <div class="tabs">
             <button onclick="showTab('scan')" class="active">Scanner</button>
             <button onclick="showTab('history')">My History</button>
+            <button onclick="showTab('all')">All</button>
         </div>
 
         <div id="scan-tab" class="tab-content active">
             <div class="camera-wrapper">
                 <video id="video" autoplay playsinline muted></video>
+                <div id="timestamp-overlay" class="timestamp-overlay"></div>
                 <canvas id="canvas" style="display:none;"></canvas>
             </div>
+            <div class="scan-upload-bar">
+                <button type="button" class="scan-btn" id="scan-btn" onclick="captureAndScan()" title="OCR scan">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <span>OCR</span>
+                </button>
+                <button type="button" class="upload-btn" onclick="document.getElementById('library-input').click()" title="Upload from library">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </button>
+            </div>
+            <input type="file" id="library-input" accept="image/*" style="display:none;">
 
             <div class="controls">
                 <div class="input-group">
                     <input type="text" id="manual-plate" placeholder="Manual Entry...">
-                    <button class="btn-secondary" onclick="manualSearch()">Go</button>
+                    <button class="btn-secondary" id="manual-plate-button">Go</button>
                 </div>
 
                 <div id="result-display" class="result-box hidden">
@@ -31,13 +43,38 @@
                     <p id="result-details"></p>
                 </div>
 
-                <button id="scan-btn" onclick="captureAndScan()">SCAN CAMERA</button>
+                <div class="bottom-spacer" aria-hidden="true"></div>
             </div>
         </div>
 
         <div id="history-tab" class="tab-content">
-            <button onclick="loadHistory()" style="margin-bottom:10px;">Refresh</button>
+            <button onclick="loadHistory(false)" style="margin-bottom:10px;">Refresh</button>
             <ul id="history-list"></ul>
+            <button id="history-show-all-btn" onclick="loadHistory(true)" style="margin-top:10px; display:none;">Show all</button>
+        </div>
+
+        <div id="all-tab" class="tab-content">
+            <input type="text" id="all-plates-search" placeholder="Search plates or names..." class="all-plates-search">
+            <div class="all-plates-table-wrapper">
+                <table class="all-plates-table">
+                    <thead>
+                        <tr>
+                            <th>plate</th>
+                            <th>name</th>
+                        </tr>
+                    </thead>
+                    <tbody id="all-plates-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div id="image-modal" class="image-modal hidden" onclick="closeImageModal()">
+        <div class="image-modal-content" onclick="event.stopPropagation()">
+            <button type="button" class="image-modal-close" onclick="closeImageModal()">×</button>
+            <button type="button" class="image-modal-delete" id="image-modal-delete-btn" title="Delete">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </button>
+            <img id="image-modal-img" alt="Scan photo" />
         </div>
     </div>
     <footer class="user-footer">

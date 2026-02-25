@@ -59,10 +59,14 @@ all:
 	make run-local
 
 check:
-	make ensure-local-services
-	make lint
-	make pytest
+	export AWS_REGION=local && \
+	make ensure-local-services && \
+	make lint && \
+	make pytest && \
 	make jscoverage
+
+test:
+	make check
 
 lint:
 	make pylint
@@ -144,7 +148,7 @@ pytest: $(PYR)
 	poetry --version
 	poetry run python --version
 	printenv | grep AWS
-	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests
+	poetry run pytest -v --log-cli-level=$(LOG_LEVEL) tests/
 
 
 pytest-coverage: $(PYR)
@@ -288,7 +292,8 @@ stop_local_minio:  bin/minio
 
 .PHONY: ensure-local-services create-tables delete-tables list-tables
 ensure-local-services:
-	@# Ensure DynamoDB Local is running and tables exist
+	@echo AWS_REGION=$(AWS_REGION)
+	@echo Ensure DynamoDB Local is running and tables exist
 	@if [ "$(AWS_REGION)" = "local" ]; then \
 		echo "Ensuring local services are ready..."; \
 		make create-tables || true; \
@@ -351,8 +356,12 @@ list-local-buckets:
 
 ################################################################
 ### build and deploy
-### cfn-lint makes an error if AWS_REGION is local...
+aws-login:
+	open -n -a "Google Chrome" --args --profile-directory="Profile 1"
+	aws login
+
 sam-lint:
+	@echo always use us-east-1 for cfn-lint
 	AWS_REGION=us-east-1 poetry run cfn-lint template.yaml
 	sam validate --lint
 
@@ -361,10 +370,16 @@ sam-build:
 	poetry export -f requirements.txt --output src/requirements.txt --without-hashes
 	sam build
 
-sam-deploy: build
+sam-deploy: sam-build
+	printenv | grep AWS
+ifeq ($(AWS_REGION),local)
+	@echo cannot deploy to local. Please specify AWS_REGION. && exit 1
+endif
+	make check
 	sam deploy
 
-sam-deploy-guided: build
+sam-deploy-guided: sam-build
+	printenv | grep AWS
 	sam deploy --guided
 
 list-domains:

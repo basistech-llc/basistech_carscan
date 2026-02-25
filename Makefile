@@ -1,13 +1,18 @@
-include Makefile.dev
+################################################################
+# Settings for deployment
+#
+# usage:
+# AWS_REGION=local make pytest                  Local testing
+# AWS_REGION=us-east-2 make sam-deploy          Deployment
+
+export AWS_PROFILE=basistech
+
+
 
 ################################################################
-# Create the virtual enviornment for testing and CI/CD
+## Bring in combined makefile
 
-APP_ETC=app/etc
-
-# Testing commands - use poetry run
-test:
-	poetry run pytest tests/ -v
+include Makefile.dev
 
 install-ubuntu:
 	sudo apt-get update
@@ -34,6 +39,13 @@ local-s3-event:
 	aws lambda invoke --function-name $(FUNCTION_NAME) --payload file://temp_event.json --endpoint-url http://localhost:3001 out.json
 	@rm temp_event.json
 
+dump-scans:
+	aws dynamodb scan  --table-name cala-garage-scans  | cat
+
+store-and-write-plates:
+	aws sts get-caller-identity # make sure we are still active
+	poetry run python  -m src.app.carscan --store-plates --store-file all_plates.json
+
 ################################################################
 
 ### startup
@@ -46,3 +58,8 @@ upload-brivo-oidc-secret:
 	aws secretsmanager create-secret \
 	--name brivo \
 	--secret-string file://secrets/brivo_combined_secrets.json
+
+
+login:
+	echo SSO start URL: https://basistech.awsapps.com/start/#
+	echo SSO region: us-east-1

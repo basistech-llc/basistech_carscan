@@ -337,9 +337,9 @@ def set_test_env_vars(monkeypatch):
     monkeypatch.setenv("BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     if "AWS_ENDPOINT_URL_DYNAMODB" not in os.environ:
-        monkeypatch.setenv("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8010/")
+        monkeypatch.setenv("AWS_ENDPOINT_URL_DYNAMODB", "http://localhost:8000/")
     if "AWS_ENDPOINT_URL_S3" not in os.environ:
-        monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "http://localhost:9100/")
+        monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "http://localhost:9000/")
     if "AWS_ACCESS_KEY_ID" not in os.environ:
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
     if "AWS_SECRET_ACCESS_KEY" not in os.environ:

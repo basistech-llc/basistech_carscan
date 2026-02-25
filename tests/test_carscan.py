@@ -2,16 +2,22 @@
 
 import base64
 import json
-import uuid
 import sys
+import time
+import uuid
+from pathlib import Path
+import os
 
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError, BotoCoreError
 
 import conftest as conftest_module
+from app import carscan
 from app.carscan import s3_client, table
-from app.main import COOKIE_SALT as APP_COOKIE_SALT, lambda_handler
+from app.main import COOKIE_SALT as APP_COOKIE_SALT, lambda_handler, logger
 from app.oidc import OIDC_STATE_SALT as APP_OIDC_SALT
 
+PLATES_FAKE = Path(__file__).parent.parent / "data" / "plates_fake.json"
 
 
 def test_conftest_salts_match_app():
@@ -103,8 +109,6 @@ def test_upload_url_generation(api_event):
     api_event["requestContext"]["routeKey"] = "GET /api/upload-url"
     api_event["requestContext"]["http"]["method"] = "GET"
     api_event["requestContext"]["http"]["path"] = "/api/upload-url"
-    api_event["rawQueryString"] = "state=VA"
-    api_event["queryStringParameters"] = {"state": "VA"}
     response = lambda_handler(api_event, {})
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
@@ -124,10 +128,24 @@ def test_async_s3_handler(s3_event):
     key    = s3_event["detail"]["object"]["key"]
     email = f"test-{str(uuid.uuid4())}@example.com"
 
-    s3_client.put_object( Bucket=bucket,
-                          Key=key,
-                          Body=b"fake image data",
-                          Metadata={"user": email} )
+    try:
+        s3_client.put_object( Bucket=bucket,
+                              Key=key,
+                              Body=b"fake image data",
+                              Metadata={"user": email} )
+    except (ClientError, BotoCoreError):
+        # We use .get() so the logger doesn't crash if a variable is missing
+        env_info = {
+            "AWS_REGION": os.environ.get("AWS_REGION"),
+            "AWS_PROFILE": os.environ.get("AWS_PROFILE"),
+            "AWS_ENDPOINT_URL_S3": os.environ.get("AWS_ENDPOINT_URL_S3"),
+        }
+        logger.error("Region: %s",s3_client.meta.region_name)
+        logger.error("Endpoint: %s",s3_client.meta.endpoint_url)
+        logger.exception(
+            f"AWS S3 PutObject failed. Environment context: {env_info}"
+        )
+        raise
 
     lambda_handler(s3_event, {})
 
@@ -141,3 +159,140 @@ def test_async_s3_handler(s3_event):
         print(f"Scan of {table}",file=sys.stderr)
         r = table.scan()
         print(json.dumps(r,indent=4,default=str),file=sys.stderr)
+
+
+def test_canonicalize_brivo_plates():
+    plates = json.loads(PLATES_FAKE.read_text())
+    cplates = carscan.canonicalize_brivo_plates(plates)
+    assert len(plates) <= len(cplates)
+    assert all( ( len(cplate['plate']) in [6,7] for cplate in cplates ) )
+
+
+def test_all_plates_api_mocked(api_event):
+    """GET /api/all-plates returns mocked data from data/plates_fake.json (no DynamoDB)."""
+    from unittest.mock import patch # pylint: disable=import-outside-toplevel
+
+    plates = json.loads(PLATES_FAKE.read_text())
+    fake = carscan.canonicalize_brivo_plates(plates)
+    with patch.object(carscan, "get_all_plates", return_value=fake):
+        ev = _http_event("GET", "/api/all-plates")
+        ev["headers"] = api_event["headers"]
+        ev["routeKey"] = "GET /api/all-plates"
+        ev["rawPath"] = "/api/all-plates"
+        ev["requestContext"]["routeKey"] = "GET /api/all-plates"
+        ev["requestContext"]["http"]["method"] = "GET"
+        ev["requestContext"]["http"]["path"] = "/api/all-plates"
+        response = lambda_handler(ev, {})
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert isinstance(body, list)
+    assert len(body) > 0
+    assert all("plate" in row and "name" in row for row in body)
+
+
+def test_history_api_returns_user_scans(api_event):
+    """GET /api/history returns scans for the authenticated user.
+
+    Uses local DynamoDB. Inserts test items then verifies history returns them
+    with correct shape (plate, result, timestamp, image_key, status).
+    """
+    user = "test@example.com"
+    now = int(time.time())
+    items_to_insert = [
+        {
+            "user_email": user,
+            "sk": "job#uploads/1000-test.jpg",
+            "plate": "ABC123",
+            "result": {"firstName": "Jane", "lastName": "Doe"},
+            "timestamp": now,
+            "image_key": "uploads/1000-test.jpg",
+        },
+        {
+            "user_email": user,
+            "sk": "job#uploads/1001-test.jpg",
+            "plate": None,
+            "result": None,
+            "timestamp": now - 100,
+            "image_key": "uploads/1001-test.jpg",
+        },
+        {
+            "user_email": user,
+            "sk": "job#manual/2000",
+            "plate": "NOT_FOUND",
+            "result": None,
+            "timestamp": now - 200,
+            "image_key": "manual",
+        },
+    ]
+    for item in items_to_insert:
+        table.put_item(Item=item)
+
+    ev = _http_event("GET", "/api/history")
+    ev["headers"] = api_event["headers"]
+    ev["routeKey"] = "GET /api/history"
+    ev["rawPath"] = "/api/history"
+    ev["requestContext"]["routeKey"] = "GET /api/history"
+    ev["requestContext"]["http"]["method"] = "GET"
+    ev["requestContext"]["http"]["path"] = "/api/history"
+    response = lambda_handler(ev, {})
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert isinstance(body, list)
+    assert len(body) >= 3
+
+    by_sk = {it["sk"]: it for it in body}
+    assert "job#uploads/1000-test.jpg" in by_sk
+    assert "job#uploads/1001-test.jpg" in by_sk
+    assert "job#manual/2000" in by_sk
+
+    it1 = by_sk["job#uploads/1000-test.jpg"]
+    assert it1["plate"] == "ABC123"
+    assert it1["result"] == {"firstName": "Jane", "lastName": "Doe"}
+    assert "timestamp" in it1
+    assert it1["image_key"] == "uploads/1000-test.jpg"
+    assert it1["status"] == "complete"
+
+    it2 = by_sk["job#uploads/1001-test.jpg"]
+    assert it2["plate"] is None
+    assert it2["result"] is None
+    assert it2["status"] == "complete"
+
+    it3 = by_sk["job#manual/2000"]
+    assert it3["plate"] == "NOT_FOUND"
+    assert it3["result"] is None
+    assert it3["image_key"] == "manual"
+    assert it3["status"] == "manual"
+
+
+def test_delete_scan_api(api_event):
+    """DELETE /api/scan deletes DynamoDB entry and S3 object (if present)."""
+    user = "test@example.com"
+    now = int(time.time())
+    sk = "job#manual/delete-test"
+    table.put_item(Item={
+        "user_email": user,
+        "sk": sk,
+        "plate": "DEL123",
+        "result": None,
+        "timestamp": now,
+        "image_key": "manual",
+    })
+
+    ev = _http_event("DELETE", "/api/scan")
+    ev["headers"] = api_event["headers"]
+    ev["routeKey"] = "DELETE /api/scan"
+    ev["rawPath"] = "/api/scan"
+    ev["rawQueryString"] = f"sk={sk.replace('#', '%23')}"
+    ev["queryStringParameters"] = {"sk": sk}
+    ev["requestContext"]["routeKey"] = "DELETE /api/scan"
+    ev["requestContext"]["http"]["method"] = "DELETE"
+    ev["requestContext"]["http"]["path"] = "/api/scan"
+    response = lambda_handler(ev, {})
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body.get("deleted") is True
+
+    resp = table.get_item(Key={"user_email": user, "sk": sk})
+    assert resp.get("Item") is None
